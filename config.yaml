@@ -1,0 +1,16 @@
+ 
+# ── Paths ────────────────────────────────────────────────────
+paths:
+  raw_data_dir: "data/raw/nvd"
+  output_dir: "data/processed/yolo"
+ 
+# ── Dataset Split ────────────────────────────────────────────
+split_mapping:
+  train:
+    - "2022-12-04_Bjenberg_02"
+    - "2022-12-23_Asjo_01_HD_5x_stab"
+    - "2022-12-02_Asjo_01_stabilized"
+  val:
+    - "2022-12-03_Nyland_01_stabilized"
+  test:
+    - "2022-12-23_Bjenberg-02"
