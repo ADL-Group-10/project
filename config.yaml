@@ -1,16 +1,168 @@
- 
-# ── Paths ────────────────────────────────────────────────────
+# Usage:
+#   from src.common_utils import load_config
+#   cfg = load_config()               # uses variants.active below
+#   cfg = load_config(variant="v2")   # runtime override
+# =============================================================================
+
+project:
+  name:       "nvd-snow-yolov9"
+  group:      "group-10"
+  seed:       42
+  device:     "cuda:0"     # graceful cpu fallback handled in device.py
+  log_level:  "INFO"       # DEBUG | INFO | WARNING | ERROR
+
+# variant flag
+variants:
+  active: "v1"             # variant= at runtime
+
+  v1:
+    experiment:    "v1_baseline"
+    use_snow_aug:  false
+    training:
+      epochs:      100
+      lr:          0.001
+
+  v2:
+    experiment:    "v2_snow_aug"
+    use_snow_aug:  true
+    training:
+      epochs:      120
+      lr:          0.0008
+
+# paths — call get_paths(cfg)
 paths:
-  raw_data_dir: "data/raw/nvd"
-  output_dir: "data/processed/yolo"
- 
-# ── Dataset Split ────────────────────────────────────────────
-split_mapping:
-  train:
-    - "2022-12-04_Bjenberg_02"
-    - "2022-12-23_Asjo_01_HD_5x_stab"
-    - "2022-12-02_Asjo_01_stabilized"
-  val:
-    - "2022-12-03_Nyland_01_stabilized"
-  test:
-    - "2022-12-23_Bjenberg-02"
+  nvd_root:         "/data/NVD"
+  checkpoints_dir:  "outputs/checkpoints"
+  results_dir:      "outputs/results"
+  optuna_db:        "outputs/optuna/study.db"
+  wandb_dir:        "outputs/wandb"
+  log_dir:          "outputs/logs"
+
+  splits:
+    train:
+      - "2022-12-04_Hjenberg-02"
+      - "2022-12-23_Asjo-01"
+      - "2022-12-02_Asjo-01-stabilized"
+    val:
+      - "2022-12-03_Nyland-01"
+    test:
+      - "2022-12-23_Bjenberg-02"
+
+  # Data Pipeline - domain-shift experiment
+  domain_shift:
+    light_snow:
+      - "2022-12-02_Asjo-01-stabilized"
+    heavy_snow:
+      - "2022-12-23_Bjenberg-02"
+
+# model
+model:
+  architecture:     "yolov9"
+  weights:          "yolov9-c.pt"      # pretrained weights filename
+  yolov9_repo:      "third_party/yolov9"
+  num_classes:      1
+  img_size:         640
+  freeze_backbone:  false
+
+# training
+# Owned by Dharmini - Variant block above overrides epochs + lr per run.
+# Owned by Sathish - Optuna writes best lr, batch_size, warmup_epochs back here before Dharmini runs the final V1 / V2 training.
+training:
+  epochs:                   100
+  batch_size:               16
+  num_workers:              4
+  optimizer:                "adam"
+  lr:                       0.001
+  lr_scheduler:             "cosine"
+  warmup_epochs:            3
+  weight_decay:             0.0005
+  early_stopping_patience:  15
+  save_every_n_epochs:      10
+  val_every_n_epochs:       5
+
+# loss
+# Owned by Dharmini. Sathish tunes box_weight + focal_gamma.
+loss:
+  box_weight:    7.5     # localization (IoU) loss weight
+  cls_weight:    0.5     # BCE classification loss weight
+  dfl_weight:    1.5     # distribution focal loss weight
+  focal_gamma:   1.5     # focal loss gamma — 0.0 disables focal term
+  use_pgi:       true    # auxiliary PGI loss (YOLOv9-specific)
+
+# augmentation
+# Owned by Achyuth
+# standard: applied to both V1 and V2 dataloaders.
+# snow:     applied only when use_snow_aug: true  (V2 variant only).
+augmentation:
+  use_snow_aug: false      # overridden by the active variant block above
+
+  standard:                # baseline Albumentations transforms
+    horizontal_flip_p: 0.5
+    hsv_h:             0.015
+    hsv_s:             0.7
+    hsv_v:             0.4
+    mosaic_p:          0.8
+
+  snow:                    # snow-aware Albumentations transforms
+    desaturation:
+      enabled:          true
+      saturation_limit: [-0.6, -0.2]   # overcast winter lighting
+      p:                0.6
+    blur:
+      enabled:          true
+      blur_limit:       [3, 7]
+      streak_p:         0.3            # lens-snow streak overlay probability
+      p:                0.5
+    brightness_jitter:
+      enabled:          true
+      brightness_limit: [-0.15, 0.05] # narrow low-end shift for short daylight
+      p:                0.7
+    snow_overlay:
+      enabled:          true
+      snow_point_lower: 0.1
+      snow_point_upper: 0.3
+      p:                0.4
+
+# ── evaluation ────────────────────────────────────────────────────────────────
+# Owned by TBD
+evaluation:
+  iou_threshold:            0.5
+  conf_threshold:           0.25
+  iou_range:                [0.50, 0.95, 0.05]  # mAP50-95 sweep
+  measure_inference_speed:  true
+  speed_warmup_iters:       50
+  speed_eval_iters:         200
+
+# ── Optuna hyperparameter tuning ──────────────────────────────────────────────
+# Owned by Sathish
+# Always tune on V1 (no snow aug, clean baseline).
+# After study completes, write best values into training + loss blocks above, then Dharmini reruns V1 and V2 with those locked HP.
+tuning:
+  n_trials:         30
+  timeout_seconds:  7200           # 2-hour hard budget cap
+  direction:        "maximize"     # maximise val mAP50
+  metric:           "val_map50"
+  pruner:           "hyperband"    # HyperbandPruner — best for DL training
+  sampler:          "tpe"          # TPE default — efficient for <100 trials
+  study_name:       "nvd-yolov9-hp"
+
+  search_space:     # Sathish tunes these
+    lr:             [1.0e-4, 1.0e-2]   # log-uniform
+    batch_size:     [8, 16, 32]         # categorical
+    box_weight:     [5.0, 10.0]         # uniform
+    focal_gamma:    [0.5, 2.5]          # uniform
+    warmup_epochs:  [1, 5]              # int
+
+# ── Weights & Biases ──────────────────────────────────────────────────────────
+logging:
+  wandb_project:              "nvd-snow-yolov9"
+  wandb_entity:               "ltu-group10"
+  log_images_every_n_epochs:  10
+  log_grad_norm:              true
+  watch_model:                false
+
+# ── domain-shift sub-experiment ───────────────────────────────────────────────
+# Owned by Achyuth. Set enabled: true when running the sub-experiment notebook.
+# Sequence lists are defined above under paths.domain_shift.
+domain_shift:
+  enabled: false
