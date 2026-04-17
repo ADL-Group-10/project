@@ -1,1 +1,0 @@
-print("Hello LTU Group-10!")
