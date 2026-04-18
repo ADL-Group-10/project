@@ -41,23 +41,17 @@ class DataPipeline:
         if not self._exists():
             self._setup()
 
-    # ── Public API ─────────────────────────────────────────────
+    # ── Public ─────────────────────────────────────────────────
 
     def run(self, augment: str = "none") -> tuple[Path, A.Compose]:
-        """Return (dataset_path, augmentation_pipeline).
-
-        Args:
-            augment:
-                "none" → resize + normalize only
-                "base" → standard augmentation from config
-                "snow" → base + snow augmentation from config
-        """
+        # Build augmentation pipeline based on variant: none / base / snow
         if augment not in ("none", "base", "snow"):
             raise ValueError(f"augment must be 'none', 'base', or 'snow', got '{augment}'")
 
         transforms = []
         std = self.aug_config["standard"]
 
+        # Base transforms (geometric + color) for base and snow variants
         if augment in ("base", "snow"):
             transforms += [
                 A.HorizontalFlip(p=std["horizontal_flip_p"]),
@@ -69,31 +63,28 @@ class DataPipeline:
                 ),
             ]
 
+        # Snow transforms on top of base
         if augment == "snow":
             snow_aug = SnowAugmentation(self.aug_config["snow"])
             transforms += snow_aug.get()
 
+        # Always applied: resize + normalize
         transforms += [
             A.Resize(height=self.img_size, width=self.img_size),
-            A.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
 
         pipeline = A.Compose(
             transforms,
             bbox_params=A.BboxParams(
-                format="yolo",
-                label_fields=["class_labels"],
-                min_visibility=0.3,
+                format="yolo", label_fields=["class_labels"], min_visibility=0.3,
             ),
         )
 
         return self.output_dir, pipeline
 
     def summary(self) -> dict:
-        """Print and return per-split stats: image counts, bbox counts."""
+        # Print and return per-split image count, bbox count, avg bboxes per image
         stats = {}
         for split in ("train", "val", "test"):
             img_dir = self.output_dir / "images" / split
@@ -108,20 +99,17 @@ class DataPipeline:
                     total_bboxes += sum(1 for line in f if line.strip())
 
             avg_bboxes = total_bboxes / num_images if num_images > 0 else 0
-
             stats[split] = {
                 "images": num_images,
                 "annotations": total_bboxes,
                 "avg_bboxes": round(avg_bboxes, 2),
             }
-
             print(f"{split:>5s}: {num_images:>6d} images | {total_bboxes:>6d} bboxes | {avg_bboxes:.2f} avg/img")
 
         return stats
 
     def show_samples(self, n: int = 5, split: str = "train", augment: str = "none") -> None:
-        """Display n random images with bboxes. For base/snow, shows
-        original vs augmented side-by-side. For notebook use."""
+        # Display n random images with bboxes, side-by-side with augmented version if augment != "none"
         import matplotlib.pyplot as plt
 
         img_dir = self.output_dir / "images" / split
@@ -143,37 +131,24 @@ class DataPipeline:
             lbl_path = lbl_dir / (img_path.stem + ".txt")
             bboxes, class_labels = self._read_yolo_label(lbl_path)
 
-            orig_display = self._draw_bboxes(image.copy(), bboxes)
-            axes[i, 0].imshow(orig_display)
+            axes[i, 0].imshow(self._draw_bboxes(image.copy(), bboxes))
             axes[i, 0].set_title(f"Original — {img_path.name}")
             axes[i, 0].axis("off")
 
             if cols == 2:
-                result = aug_pipeline(
-                    image=image, bboxes=bboxes, class_labels=class_labels
-                )
-                aug_display = self._draw_bboxes(
-                    (result["image"] * 255).astype(np.uint8),
-                    result["bboxes"],
-                )
-                axes[i, 1].imshow(aug_display)
+                result = aug_pipeline(image=image, bboxes=bboxes, class_labels=class_labels)
+                aug_img = (result["image"] * 255).astype(np.uint8)
+                axes[i, 1].imshow(self._draw_bboxes(aug_img, result["bboxes"]))
                 axes[i, 1].set_title(f"Augmented ({augment})")
                 axes[i, 1].axis("off")
 
         plt.tight_layout()
         plt.show()
 
-    # ── Private — Setup Chain ──────────────────────────────────
+    # ── Private ────────────────────────────────────────────────
 
     def _setup(self) -> None:
-        """Full preparation chain (runs once, skipped if data exists):
-        1. Extract frames from .mp4 videos (skip for .png sequences)
-        2. Parse CVAT XML annotations → YOLO .txt labels
-        3. Organize into images/{train,val,test}/ and labels/{train,val,test}/
-        4. Write dataset.yaml
-        5. Validate image↔label pairing
-        6. Print stats
-        """
+        # One-time setup: parse XML, extract frames, organize splits, validate
         print("Setting up YOLO dataset from NVD...")
 
         for split in ("train", "val", "test"):
@@ -185,347 +160,210 @@ class DataPipeline:
                 print(f"  Processing {seq_name} → {split}")
                 self._process_sequence(seq_name, split)
 
-        self._write_dataset_yaml()
+        # Write dataset.yaml inline (only used here)
+        yaml_path = self.output_dir / "dataset.yaml"
+        with open(yaml_path, "w") as f:
+            yaml.dump({
+                "path": str(self.output_dir.resolve()),
+                "train": "images/train", "val": "images/val", "test": "images/test",
+                "nc": self.num_classes, "names": ["car"],
+            }, f, default_flow_style=False)
+        print(f"  Wrote {yaml_path}")
+
         self._validate()
         self.summary()
         print("Setup complete.")
 
     def _process_sequence(self, seq_name: str, split: str) -> None:
-        """Extract frames + parse annotations for one video sequence."""
-        seq_dir = self._find_seq_dir(seq_name)
-        xml_path = self._find_xml(seq_name)
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
-
-        frame_annotations = self._parse_cvat_xml(root)
+        # Parse annotations for one sequence, then extract frames (.mp4) or copy (.png)
+        seq_dir = self._find_path(seq_name, is_dir=True)
+        xml_path = self._find_path(seq_name, is_dir=False, suffix=".xml")
+        frame_annotations = self._parse_cvat_xml(ET.parse(xml_path).getroot())
 
         mp4_files = list(seq_dir.glob("*.mp4"))
         png_files = sorted(seq_dir.glob("*.png"))
 
         if mp4_files:
-            self._extract_and_save_frames(
-                mp4_files[0], frame_annotations, split, seq_name
-            )
+            self._extract_frames(mp4_files[0], frame_annotations, split, seq_name)
         elif png_files:
-            self._copy_png_frames(
-                png_files, frame_annotations, split, seq_name
-            )
+            self._copy_png_frames(png_files, frame_annotations, split, seq_name)
         else:
-            raise FileNotFoundError(
-                f"No .mp4 or .png files found in {seq_dir}"
-            )
+            raise FileNotFoundError(f"No .mp4 or .png files found in {seq_dir}")
 
     def _parse_cvat_xml(self, root: ET.Element) -> dict[int, list[list[float]]]:
-        """Parse CVAT 1.1 XML into per-frame YOLO bounding boxes.
-
-        Converts xtl/ytl/xbr/ybr (absolute pixels) to
-        class_id x_center y_center width height (normalized 0-1).
-        Skips boxes marked outside="1".
-        """
+        # Convert CVAT tracks (xtl/ytl/xbr/ybr pixels) to per-frame YOLO labels (normalized center+size)
         frame_annotations: dict[int, list[list[float]]] = {}
 
         for track in root.findall(".//track"):
             if track.get("label") != "car":
                 continue
-
             for box in track.findall("box"):
                 if box.get("outside") == "1":
                     continue
 
                 frame_num = int(box.get("frame"))
-                xtl = float(box.get("xtl"))
-                ytl = float(box.get("ytl"))
-                xbr = float(box.get("xbr"))
-                ybr = float(box.get("ybr"))
+                xtl = max(0.0, min(float(box.get("xtl")), self._FRAME_WIDTH))
+                ytl = max(0.0, min(float(box.get("ytl")), self._FRAME_HEIGHT))
+                xbr = max(0.0, min(float(box.get("xbr")), self._FRAME_WIDTH))
+                ybr = max(0.0, min(float(box.get("ybr")), self._FRAME_HEIGHT))
 
-                # Clamp to frame boundaries
-                xtl = max(0.0, min(xtl, self._FRAME_WIDTH))
-                ytl = max(0.0, min(ytl, self._FRAME_HEIGHT))
-                xbr = max(0.0, min(xbr, self._FRAME_WIDTH))
-                ybr = max(0.0, min(ybr, self._FRAME_HEIGHT))
-
-                w = xbr - xtl
-                h = ybr - ytl
+                w, h = xbr - xtl, ybr - ytl
                 if w <= 0 or h <= 0:
                     continue
 
-                x_center = (xtl + w / 2) / self._FRAME_WIDTH
-                y_center = (ytl + h / 2) / self._FRAME_HEIGHT
-                norm_w = w / self._FRAME_WIDTH
-                norm_h = h / self._FRAME_HEIGHT
+                x_c = (xtl + w / 2) / self._FRAME_WIDTH
+                y_c = (ytl + h / 2) / self._FRAME_HEIGHT
 
                 if frame_num not in frame_annotations:
                     frame_annotations[frame_num] = []
-
                 frame_annotations[frame_num].append(
-                    [0, x_center, y_center, norm_w, norm_h]
+                    [0, x_c, y_c, w / self._FRAME_WIDTH, h / self._FRAME_HEIGHT]
                 )
 
         return frame_annotations
 
-    def _extract_and_save_frames(
-        self,
-        mp4_path: Path,
-        frame_annotations: dict[int, list[list[float]]],
-        split: str,
-        seq_name: str,
-    ) -> None:
-        """Extract annotated frames from .mp4. Tries DALI first, falls back to OpenCV."""
-        try:
-            self._extract_with_dali(mp4_path, frame_annotations, split, seq_name)
-        except (ImportError, RuntimeError) as e:
-            print(f"    DALI unavailable ({e}), falling back to OpenCV")
-            self._extract_with_opencv(mp4_path, frame_annotations, split, seq_name)
-
-    def _extract_with_dali(
-        self,
-        mp4_path: Path,
-        frame_annotations: dict[int, list[list[float]]],
-        split: str,
-        seq_name: str,
-    ) -> None:
-        """GPU-accelerated frame extraction using NVIDIA DALI."""
-        from nvidia.dali import pipeline_def, fn
-        import nvidia.dali as dali
-
-        annotated_frames = sorted(frame_annotations.keys())
-        img_dir = self.output_dir / "images" / split
-        lbl_dir = self.output_dir / "labels" / split
-
-        @pipeline_def(batch_size=1, num_threads=4, device_id=0)
-        def video_pipeline():
-            video = fn.readers.video(
-                filenames=[str(mp4_path)],
-                sequence_length=1,
-                device="gpu",
-                name="reader",
-            )
-            return video
-
-        pipe = video_pipeline()
-        pipe.build()
-
-        frame_idx = 0
-        annotated_set = set(annotated_frames)
-
-        try:
-            while True:
-                (output,) = pipe.run()
-                if frame_idx in annotated_set:
-                    frame = output.as_cpu().at(0)[0]
-                    frame_name = f"{seq_name}_frame_{frame_idx:06d}"
-
-                    cv2.imwrite(
-                        str(img_dir / f"{frame_name}.png"),
-                        cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
-                    )
-                    self._write_yolo_label(
-                        lbl_dir / f"{frame_name}.txt",
-                        frame_annotations[frame_idx],
-                    )
-
-                frame_idx += 1
-        except StopIteration:
-            pass
-
-        print(f"    DALI: extracted {len(annotated_frames)} frames from {mp4_path.name}")
-
-    def _extract_with_opencv(
-        self,
-        mp4_path: Path,
-        frame_annotations: dict[int, list[list[float]]],
-        split: str,
-        seq_name: str,
-    ) -> None:
-        """CPU fallback for frame extraction using OpenCV."""
-        cap = cv2.VideoCapture(str(mp4_path))
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video: {mp4_path}")
-
+    def _extract_frames(self, mp4_path, frame_annotations, split, seq_name) -> None:
+        # Extract annotated frames from .mp4. Try DALI (GPU), fall back to OpenCV (CPU)
         img_dir = self.output_dir / "images" / split
         lbl_dir = self.output_dir / "labels" / split
         annotated_set = set(frame_annotations.keys())
-        saved = 0
-        frame_idx = 0
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+        try:
+            from nvidia.dali import pipeline_def, fn
 
-            if frame_idx in annotated_set:
-                frame_name = f"{seq_name}_frame_{frame_idx:06d}"
-
-                cv2.imwrite(str(img_dir / f"{frame_name}.png"), frame)
-                self._write_yolo_label(
-                    lbl_dir / f"{frame_name}.txt",
-                    frame_annotations[frame_idx],
+            @pipeline_def(batch_size=1, num_threads=4, device_id=0)
+            def video_pipe():
+                return fn.readers.video(
+                    filenames=[str(mp4_path)], sequence_length=1,
+                    device="gpu", name="reader",
                 )
-                saved += 1
 
-            frame_idx += 1
+            pipe = video_pipe()
+            pipe.build()
+            frame_idx = 0
+            try:
+                while True:
+                    (output,) = pipe.run()
+                    if frame_idx in annotated_set:
+                        frame = output.as_cpu().at(0)[0]
+                        name = f"{seq_name}_frame_{frame_idx:06d}"
+                        cv2.imwrite(str(img_dir / f"{name}.png"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+                        self._write_yolo_label(lbl_dir / f"{name}.txt", frame_annotations[frame_idx])
+                    frame_idx += 1
+            except StopIteration:
+                pass
+            print(f"    DALI: extracted {len(annotated_set)} frames from {mp4_path.name}")
 
-        cap.release()
-        print(f"    OpenCV: extracted {saved} frames from {mp4_path.name}")
+        except (ImportError, RuntimeError) as e:
+            print(f"    DALI unavailable ({e}), falling back to OpenCV")
+            cap = cv2.VideoCapture(str(mp4_path))
+            if not cap.isOpened():
+                raise RuntimeError(f"Cannot open video: {mp4_path}")
 
-    def _copy_png_frames(
-        self,
-        png_files: list[Path],
-        frame_annotations: dict[int, list[list[float]]],
-        split: str,
-        seq_name: str,
-    ) -> None:
-        """Copy pre-extracted .png frames and create YOLO labels."""
+            frame_idx, saved = 0, 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if frame_idx in annotated_set:
+                    name = f"{seq_name}_frame_{frame_idx:06d}"
+                    cv2.imwrite(str(img_dir / f"{name}.png"), frame)
+                    self._write_yolo_label(lbl_dir / f"{name}.txt", frame_annotations[frame_idx])
+                    saved += 1
+                frame_idx += 1
+            cap.release()
+            print(f"    OpenCV: extracted {saved} frames from {mp4_path.name}")
+
+    def _copy_png_frames(self, png_files, frame_annotations, split, seq_name) -> None:
+        # Copy pre-extracted .png frames that have annotations, write YOLO labels
         import shutil
-
         img_dir = self.output_dir / "images" / split
         lbl_dir = self.output_dir / "labels" / split
         saved = 0
 
         for frame_idx, png_path in enumerate(png_files):
             if frame_idx in frame_annotations:
-                frame_name = f"{seq_name}_frame_{frame_idx:06d}"
-
-                shutil.copy2(png_path, img_dir / f"{frame_name}.png")
-                self._write_yolo_label(
-                    lbl_dir / f"{frame_name}.txt",
-                    frame_annotations[frame_idx],
-                )
+                name = f"{seq_name}_frame_{frame_idx:06d}"
+                shutil.copy2(png_path, img_dir / f"{name}.png")
+                self._write_yolo_label(lbl_dir / f"{name}.txt", frame_annotations[frame_idx])
                 saved += 1
 
         print(f"    Copied {saved} annotated frames from {seq_name}")
 
-    def _find_seq_dir(self, seq_name: str) -> Path:
-        """Locate the sequence directory, handling space/underscore differences."""
-        seq_dir = self.raw_dir / seq_name
-        if seq_dir.exists():
-            return seq_dir
+    def _find_path(self, seq_name: str, is_dir: bool = True, suffix: str = "") -> Path:
+        # Locate a file or directory by name, handling space/underscore differences
+        candidates = [
+            seq_name,
+            seq_name.replace(" ", "_"),
+        ]
 
-        alt_dir = self.raw_dir / seq_name.replace(" ", "_")
-        if alt_dir.exists():
-            return alt_dir
+        for name in candidates:
+            path = self.raw_dir / (name + suffix) if not is_dir else self.raw_dir / name
+            if path.exists():
+                return path
 
+        # Fuzzy fallback — normalize both sides
         norm_seq = seq_name.lower().replace(" ", "_")
-        for d in self.raw_dir.iterdir():
-            if d.is_dir() and d.name.lower().replace(" ", "_") == norm_seq:
-                return d
+        for item in self.raw_dir.iterdir():
+            if is_dir and not item.is_dir():
+                continue
+            if not is_dir and item.suffix != suffix:
+                continue
+            if item.stem.lower().replace(" ", "_") == norm_seq:
+                return item
 
-        raise FileNotFoundError(
-            f"No directory found for sequence '{seq_name}' in {self.raw_dir}"
-        )
-
-    def _find_xml(self, seq_name: str) -> Path:
-        """Locate the CVAT XML annotation file for a sequence."""
-        xml_path = self.raw_dir / f"{seq_name}.xml"
-        if xml_path.exists():
-            return xml_path
-
-        alt_name = seq_name.replace(" ", "_")
-        xml_path = self.raw_dir / f"{alt_name}.xml"
-        if xml_path.exists():
-            return xml_path
-
-        norm_seq = seq_name.lower().replace(" ", "_")
-        for xml_file in self.raw_dir.glob("*.xml"):
-            norm_xml = xml_file.stem.lower().replace(" ", "_")
-            if norm_seq == norm_xml:
-                return xml_file
-
-        raise FileNotFoundError(
-            f"No XML annotation found for sequence '{seq_name}' in {self.raw_dir}"
-        )
+        kind = "directory" if is_dir else f"'{suffix}' file"
+        raise FileNotFoundError(f"No {kind} found for '{seq_name}' in {self.raw_dir}")
 
     def _write_yolo_label(self, path: Path, annotations: list[list[float]]) -> None:
-        """Write one YOLO label file. Each line: class_id x_c y_c w h"""
+        # Write one YOLO label file: class_id x_center y_center width height per line
         with open(path, "w") as f:
             for ann in annotations:
                 f.write(" ".join(f"{v:.6f}" if i > 0 else str(int(v))
                                 for i, v in enumerate(ann)) + "\n")
 
-    def _write_dataset_yaml(self) -> None:
-        """Write dataset.yaml for YOLOv9."""
-        dataset_yaml = {
-            "path": str(self.output_dir.resolve()),
-            "train": "images/train",
-            "val": "images/val",
-            "test": "images/test",
-            "nc": self.num_classes,
-            "names": ["car"],
-        }
-        yaml_path = self.output_dir / "dataset.yaml"
-        with open(yaml_path, "w") as f:
-            yaml.dump(dataset_yaml, f, default_flow_style=False)
-        print(f"  Wrote {yaml_path}")
-
     def _validate(self) -> None:
-        """Check that every image has a label and every label is valid YOLO format."""
+        # Check every image has a matching label, every label has valid YOLO format
         for split in ("train", "val", "test"):
             img_dir = self.output_dir / "images" / split
             lbl_dir = self.output_dir / "labels" / split
 
-            images = {p.stem for p in img_dir.glob("*.png")} | \
-                     {p.stem for p in img_dir.glob("*.jpg")}
+            images = {p.stem for p in img_dir.glob("*.png")} | {p.stem for p in img_dir.glob("*.jpg")}
             labels = {p.stem for p in lbl_dir.glob("*.txt")}
 
-            missing_labels = images - labels
-            missing_images = labels - images
-
-            if missing_labels:
-                raise ValueError(
-                    f"{split}: {len(missing_labels)} images have no label file"
-                )
-            if missing_images:
-                raise ValueError(
-                    f"{split}: {len(missing_images)} labels have no image file"
-                )
+            if images - labels:
+                raise ValueError(f"{split}: {len(images - labels)} images have no label")
+            if labels - images:
+                raise ValueError(f"{split}: {len(labels - images)} labels have no image")
             if not images:
                 raise ValueError(f"{split}: split is empty")
 
             for lbl_file in lbl_dir.glob("*.txt"):
                 with open(lbl_file) as f:
-                    for line_num, line in enumerate(f, 1):
+                    for ln, line in enumerate(f, 1):
                         parts = line.strip().split()
                         if len(parts) != 5:
-                            raise ValueError(
-                                f"{lbl_file.name}:{line_num}: expected 5 values, got {len(parts)}"
-                            )
-                        cls_id = int(parts[0])
-                        values = [float(v) for v in parts[1:]]
-                        if cls_id >= self.num_classes:
-                            raise ValueError(
-                                f"{lbl_file.name}:{line_num}: invalid class_id {cls_id}"
-                            )
-                        if not all(0.0 <= v <= 1.0 for v in values):
-                            raise ValueError(
-                                f"{lbl_file.name}:{line_num}: values out of [0, 1] range"
-                            )
+                            raise ValueError(f"{lbl_file.name}:{ln}: expected 5 values, got {len(parts)}")
+                        if int(parts[0]) >= self.num_classes:
+                            raise ValueError(f"{lbl_file.name}:{ln}: invalid class_id {parts[0]}")
+                        if not all(0.0 <= float(v) <= 1.0 for v in parts[1:]):
+                            raise ValueError(f"{lbl_file.name}:{ln}: values out of [0,1]")
 
         print("  Validation passed.")
 
     def _exists(self) -> bool:
-        """True if output_dir has valid YOLO structure with files in each split."""
-        required = ["images/train", "images/val", "images/test",
-                     "labels/train", "labels/val", "labels/test"]
-
-        for subdir in required:
-            d = self.output_dir / subdir
-            if not d.exists():
+        # Check if processed YOLO data already exists with all splits populated
+        for sub in ("images/train", "images/val", "images/test",
+                     "labels/train", "labels/val", "labels/test"):
+            d = self.output_dir / sub
+            if not d.exists() or not any(d.iterdir()):
                 return False
-            if not any(d.iterdir()):
-                return False
-
-        if not (self.output_dir / "dataset.yaml").exists():
-            return False
-
-        return True
-
-    # ── Helpers ────────────────────────────────────────────────
+        return (self.output_dir / "dataset.yaml").exists()
 
     @staticmethod
     def _read_yolo_label(path: Path) -> tuple[list, list]:
-        """Read a YOLO label file. Returns (bboxes, class_labels)."""
-        bboxes = []
-        class_labels = []
+        # Read YOLO label file, return (bboxes, class_labels)
+        bboxes, class_labels = [], []
         if path.exists():
             with open(path) as f:
                 for line in f:
@@ -537,13 +375,11 @@ class DataPipeline:
 
     @staticmethod
     def _draw_bboxes(image: np.ndarray, bboxes: list) -> np.ndarray:
-        """Draw YOLO-format bboxes on an image for visualization."""
+        # Draw YOLO-format bboxes on image for visualization
         h, w = image.shape[:2]
         for bbox in bboxes:
             x_c, y_c, bw, bh = bbox
-            x1 = int((x_c - bw / 2) * w)
-            y1 = int((y_c - bh / 2) * h)
-            x2 = int((x_c + bw / 2) * w)
-            y2 = int((y_c + bh / 2) * h)
+            x1, y1 = int((x_c - bw / 2) * w), int((y_c - bh / 2) * h)
+            x2, y2 = int((x_c + bw / 2) * w), int((y_c + bh / 2) * h)
             cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
         return image

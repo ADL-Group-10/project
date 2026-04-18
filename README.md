@@ -20,7 +20,7 @@ src/data/
 **On first run**, `DataPipeline` detects that processed YOLO data doesn't exist and automatically runs the setup chain:
 
 1. **Parse** — Reads CVAT 1.1 XML annotations per video sequence
-2. **Extract** — Pulls frames from .mp4 using NVIDIA DALI (GPU-accelerated, falls back to OpenCV if unavailable). For .png sequences, copies directly
+2. **Extract** — Pulls frames from .mp4 using NVIDIA DALI (GPU-accelerated decoding on LTU cluster), falls back to OpenCV for local development. For .png sequences, copies directly
 3. **Convert** — Transforms CVAT bounding boxes to YOLO format. CVAT stores boxes as absolute pixel coordinates using four corners: `xtl, ytl` (top-left) and `xbr, ybr` (bottom-right). YOLO expects center point + dimensions, all normalized to 0–1. For example on a 1920×1080 frame:
    ```
    CVAT:  xtl=1064, ytl=100, xbr=1123, ybr=212   (pixels, corners)
@@ -61,7 +61,7 @@ pipeline.show_samples(n=5, augment="snow")  # visual sanity check
 - **Base transforms** are built inside `DataPipeline` using params from `config.yaml → augmentation.standard`
 - **Snow transforms** are owned by `SnowAugmentation`, called only when `augment="snow"`, using params from `config.yaml → augmentation.snow`
 - **Albumentations** handles all augmentations
-- **NVIDIA DALI** handles video decoding (GPU-accelerated frame extraction)
+- **NVIDIA DALI** handles GPU-accelerated video decoding for frame extraction on the LTU cluster. Falls back to OpenCV for local development
 
 #### Config keys used
 
