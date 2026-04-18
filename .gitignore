@@ -1,2 +1,2 @@
-data/processed
-data/raw
+src/data/processed/
+src/data/raw/
