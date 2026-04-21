@@ -1,2 +1,10 @@
 src/data/processed/
-src/data/raw/
+src/data/raw/*.egg-info/
+build/
+__pycache__/
+*.py[cod]
+*.egg
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+outputs/

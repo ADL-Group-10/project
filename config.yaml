@@ -140,6 +140,7 @@ evaluation:
 tuning:
   n_trials:         30
   timeout_seconds:  7200           # 2-hour hard budget cap
+  trial_epochs:     15             # per-trial epoch cap during hyperparameter search
   direction:        "maximize"     # maximise val mAP50
   metric:           "val_map50"
   pruner:           "hyperband"    # HyperbandPruner — best for DL training
