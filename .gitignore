@@ -8,3 +8,5 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 outputs/
+third_party/
+nvd_snow_yolov9.egg-info/

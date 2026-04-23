@@ -32,6 +32,7 @@ variants:
 # paths — call get_paths(cfg)
 paths:
   nvd_root:         "src/data/NVD"
+  yolo_output:      "outputs/yolo"
   checkpoints_dir:  "outputs/checkpoints"
   results_dir:      "outputs/results"
   optuna_db:        "outputs/optuna/study.db"
