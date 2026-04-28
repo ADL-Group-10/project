@@ -1,6 +1,13 @@
-# project
-https://excalidraw.com/#json=Q3hyRhoJXY1I4pRRY8ZIQ,XmrgmnoBZrxzP5yRJWiLbA
-<img width="1580" height="996" alt="image" src="https://github.com/user-attachments/assets/c169dc25-d326-4d29-adad-ecd4209ab855" />
+# NVD Car Detection in Snow — YOLOv9
+
+Car detection in snowy conditions using YOLOv9 on the Nordic Vehicle Dataset (NVD).
+Course project for D7047E Advanced Deep Learning, LTU Group 10.
+
+Two-variant experiment:
+- **V1** — baseline augmentation (geometric + HSV jitter)
+- **V2** — V1 + snow-specific augmentation (desaturation, blur, brightness jitter, snow overlay)
+
+---
 
 ### Data Pipeline
 
@@ -10,8 +17,8 @@ Converts the Nordic Vehicle Dataset (NVD) into YOLO-ready format for YOLOv9 trai
 
 ```
 src/data/
-    data_pipeline.py       # DataPipeline — main orchestrator
-    snow_augmentation.py   # SnowAugmentation — snow-specific transforms
+    data_pipeline.py       # DataPipeline -- main orchestrator
+    snow_augmentation.py   # SnowAugmentation -- snow-specific transforms
     __init__.py
 ```
 
@@ -19,19 +26,23 @@ src/data/
 
 **On first run**, `DataPipeline` detects that processed YOLO data doesn't exist and automatically runs the setup chain:
 
-1. **Parse** — Reads CVAT 1.1 XML annotations per video sequence
-2. **Extract** — Pulls frames from .mp4 using NVIDIA DALI (GPU-accelerated decoding on LTU cluster), falls back to OpenCV for local development. For .png sequences, copies directly
-3. **Convert** — Transforms CVAT bounding boxes to YOLO format. CVAT stores boxes as absolute pixel coordinates using four corners: `xtl, ytl` (top-left) and `xbr, ybr` (bottom-right). YOLO expects center point + dimensions, all normalized to 0–1. For example on a 1920×1080 frame:
+1. **Parse** -- Reads CVAT 1.1 XML annotations per video sequence
+2. **Extract** -- Pulls annotated frames from .mp4 using **decord** (random frame access, only decodes annotated frames). For .png sequences, copies directly
+3. **Convert** -- Transforms CVAT bounding boxes to YOLO format. CVAT stores boxes as absolute pixel coordinates using four corners: `xtl, ytl` (top-left) and `xbr, ybr` (bottom-right). YOLO expects center point + dimensions, all normalized to 0-1. For example on a 1920x1080 frame:
    ```
    CVAT:  xtl=1064, ytl=100, xbr=1123, ybr=212   (pixels, corners)
    YOLO:  0  0.5695  0.1444  0.0307  0.1037        (class_id, x_center, y_center, w, h)
    ```
-4. **Organize** — Places frames and labels into `images/{train,val,test}/` and `labels/{train,val,test}/`
-5. **Generate** — Writes `dataset.yaml` for YOLOv9
-6. **Validate** — Checks image↔label pairing, label format, no empty splits
+4. **Organize** -- Places frames and labels into `images/{train,val,test}/` and `labels/{train,val,test}/`
+5. **Generate** -- Writes `dataset.yaml` for YOLOv9
+6. **Validate** -- Checks image-label pairing, label format, no empty splits
 
-Only annotated frames are saved — unannotated frames are skipped.
+Only annotated frames are saved -- unannotated frames are skipped.
 Subsequent runs skip setup entirely (idempotent).
+
+#### Frame extraction
+
+Uses **decord** with random frame access -- only decodes annotated frames, skips the rest entirely.
 
 #### Usage
 
@@ -56,12 +67,11 @@ pipeline.show_samples(n=5, augment="snow")  # visual sanity check
 |-------|-----------|------------|
 | `none` | Resize, Normalize | Clean baseline |
 | `base` | HorizontalFlip, HSV jitter, Resize, Normalize | V1 baseline |
-| `snow` | Base + desaturation, blur, brightness jitter, snow/fog overlay | V2 snow-augmented |
+| `snow` | Base + desaturation, blur, brightness jitter, snow overlay | V2 snow-augmented |
 
-- **Base transforms** are built inside `DataPipeline` using params from `config.yaml → augmentation.standard`
-- **Snow transforms** are owned by `SnowAugmentation`, called only when `augment="snow"`, using params from `config.yaml → augmentation.snow`
+- **Base transforms** are built inside `DataPipeline` using params from `config.yaml -> augmentation.standard`
+- **Snow transforms** are owned by `SnowAugmentation`, called only when `augment="snow"`, using params from `config.yaml -> augmentation.snow`
 - **Albumentations** handles all augmentations
-- **NVIDIA DALI** handles GPU-accelerated video decoding for frame extraction on the LTU cluster. Falls back to OpenCV for local development
 
 #### Config keys used
 

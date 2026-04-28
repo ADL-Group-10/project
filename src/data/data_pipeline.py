@@ -182,14 +182,14 @@ class DataPipeline:
         xml_path = self._find_xml(seq_dir, seq_name)
         frame_annotations = self._parse_cvat_xml(ET.parse(xml_path).getroot())
 
-        mp4_files = list(seq_dir.glob("*.mp4")) or list(seq_dir.glob("*.MP4"))
-        png_files = sorted(seq_dir.glob("*.png")) or sorted(seq_dir.glob("*.PNG"))
+        mp4_files = [f for f in seq_dir.iterdir() if f.suffix.lower() == ".mp4"]
+        png_files = sorted(f for f in seq_dir.iterdir() if f.suffix.lower() == ".png")
 
         # Handle nested subdirectory (e.g. PNG sequences extracted into a same-named subfolder)
         if not mp4_files and not png_files:
             for child in seq_dir.iterdir():
                 if child.is_dir():
-                    png_files = sorted(child.glob("*.png")) or sorted(child.glob("*.PNG"))
+                    png_files = sorted(f for f in child.iterdir() if f.suffix.lower() == ".png")
                     if png_files:
                         break
 
@@ -233,52 +233,27 @@ class DataPipeline:
         return frame_annotations
 
     def _extract_frames(self, mp4_path, frame_annotations, split, seq_name) -> None:
-        # Extract annotated frames from .mp4. Try decord (GPU), fall back to PyAV (CPU)
+        # Extract annotated frames from .mp4 using decord (random access)
+        import decord
+        decord.bridge.set_bridge("native")
+
         img_dir = self.output_dir / "images" / split
         lbl_dir = self.output_dir / "labels" / split
         annotated_indices = sorted(frame_annotations.keys())
 
-        try:
-            import decord
-            decord.bridge.set_bridge("native")
-            ctx = decord.gpu(0)
-            vr = decord.VideoReader(str(mp4_path), ctx=ctx)
-            self.logger.info(f"decord (GPU): extracting {len(annotated_indices)} frames from {mp4_path.name}")
+        vr = decord.VideoReader(str(mp4_path), ctx=decord.cpu(0))
+        self.logger.info(f"decord: extracting {len(annotated_indices)} frames from {mp4_path.name}")
 
-            for frame_idx in annotated_indices:
-                if frame_idx >= len(vr):
-                    self.logger.warning(f"Frame {frame_idx} out of range ({len(vr)} total), skipping")
-                    continue
-                frame = vr[frame_idx].asnumpy()
-                name = f"{seq_name}_frame_{frame_idx:06d}"
-                cv2.imwrite(str(img_dir / f"{name}.png"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-                self._write_yolo_label(lbl_dir / f"{name}.txt", frame_annotations[frame_idx])
+        for frame_idx in annotated_indices:
+            if frame_idx >= len(vr):
+                self.logger.warning(f"Frame {frame_idx} out of range ({len(vr)} total), skipping")
+                continue
+            frame = vr[frame_idx].asnumpy()
+            name = f"{seq_name}_frame_{frame_idx:06d}"
+            cv2.imwrite(str(img_dir / f"{name}.png"), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            self._write_yolo_label(lbl_dir / f"{name}.txt", frame_annotations[frame_idx])
 
-            self.logger.info(f"decord (GPU): done -- {len(annotated_indices)} frames from {mp4_path.name}")
-
-        except Exception as e:
-            self.logger.warning(f"decord GPU unavailable ({e}), falling back to PyAV (CPU)")
-            self._extract_frames_pyav(mp4_path, frame_annotations, annotated_indices, img_dir, lbl_dir, seq_name)
-
-    def _extract_frames_pyav(self, mp4_path, frame_annotations, annotated_indices, img_dir, lbl_dir, seq_name) -> None:
-        # Fallback: extract annotated frames using PyAV (CPU, faster than OpenCV)
-        import av
-
-        annotated_set = set(annotated_indices)
-        container = av.open(str(mp4_path))
-        stream = container.streams.video[0]
-        stream.thread_type = "AUTO"
-
-        saved = 0
-        for frame_idx, frame in enumerate(container.decode(stream)):
-            if frame_idx in annotated_set:
-                img = frame.to_ndarray(format="bgr24")
-                name = f"{seq_name}_frame_{frame_idx:06d}"
-                cv2.imwrite(str(img_dir / f"{name}.png"), img)
-                self._write_yolo_label(lbl_dir / f"{name}.txt", frame_annotations[frame_idx])
-                saved += 1
-        container.close()
-        self.logger.info(f"PyAV (CPU): extracted {saved} frames from {mp4_path.name}")
+        self.logger.info(f"decord: done -- {len(annotated_indices)} frames from {mp4_path.name}")
 
     def _copy_png_frames(self, png_files, frame_annotations, split, seq_name) -> None:
         # Copy pre-extracted .png frames that have annotations, write YOLO labels
