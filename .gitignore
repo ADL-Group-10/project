@@ -1,12 +1,42 @@
+# Data — raw videos/images and processed YOLO output
+src/data/NVD/
 src/data/processed/
-src/data/raw/*.egg-info/
+
+# Build / packaging
 build/
+dist/
+*.egg
+*.egg-info/
+nvd_snow_yolov9.egg-info/
+
+# Python
 __pycache__/
 *.py[cod]
-*.egg
+*.pyo
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Testing / linting
 .pytest_cache/
 .mypy_cache/
+
+# Project outputs (checkpoints, logs, wandb, optuna)
 outputs/
 third_party/
-nvd_snow_yolov9.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.env
+
+# Claude
+CLAUDE.md
+DATA_PIPELINE_DESIGN_LOG.md

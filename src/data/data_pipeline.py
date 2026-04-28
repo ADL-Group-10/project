@@ -8,6 +8,7 @@ import numpy as np
 import yaml
 import albumentations as A
 
+from src.common_utils import load_config, get_logger, set_seed_from_config, get_paths
 from .snow_augmentation import SnowAugmentation
 
 
@@ -24,19 +25,20 @@ class DataPipeline:
     _FRAME_WIDTH = 1920
     _FRAME_HEIGHT = 1080
 
-    def __init__(self, config_path: str) -> None:
+    def __init__(self, config_path: str = "config.yaml", variant: str | None = None) -> None:
         """Load config and prepare dataset if YOLO files don't exist yet."""
-        self.config_path = Path(config_path)
+        self.config = load_config(config_path, variant=variant)
+        self.logger = get_logger(__name__, self.config)
 
-        with open(self.config_path, "r") as f:
-            self.config = yaml.safe_load(f)
+        set_seed_from_config(self.config)
 
-        self.raw_dir = Path(self.config["paths"]["nvd_root"])
-        self.output_dir = Path(self.config["paths"]["yolo_output"])
-        self.splits = self.config["paths"]["splits"]
-        self.img_size = self.config["model"]["img_size"]
-        self.num_classes = self.config["model"]["num_classes"]
-        self.aug_config = self.config["augmentation"]
+        paths = get_paths(self.config, create_dirs=False)
+        self.raw_dir = paths.nvd_root
+        self.output_dir = Path(self.config.paths.yolo_output)
+        self.splits = self.config.paths.splits
+        self.img_size = self.config.model.img_size
+        self.num_classes = self.config.model.num_classes
+        self.aug_config = self.config.augmentation
 
         if not self._exists():
             self._setup()
@@ -104,7 +106,7 @@ class DataPipeline:
                 "annotations": total_bboxes,
                 "avg_bboxes": round(avg_bboxes, 2),
             }
-            print(f"{split:>5s}: {num_images:>6d} images | {total_bboxes:>6d} bboxes | {avg_bboxes:.2f} avg/img")
+            self.logger.info(f"{split:>5s}: {num_images:>6d} images | {total_bboxes:>6d} bboxes | {avg_bboxes:.2f} avg/img")
 
         return stats
 
@@ -149,7 +151,7 @@ class DataPipeline:
 
     def _setup(self) -> None:
         # One-time setup: parse XML, extract frames, organize splits, validate
-        print("Setting up YOLO dataset from NVD...")
+        self.logger.info("Setting up YOLO dataset from NVD...")
 
         for split in ("train", "val", "test"):
             (self.output_dir / "images" / split).mkdir(parents=True, exist_ok=True)
@@ -157,7 +159,7 @@ class DataPipeline:
 
         for split, sequences in self.splits.items():
             for seq_name in sequences:
-                print(f"  Processing {seq_name} → {split}")
+                self.logger.info(f"Processing {seq_name} -> {split}")
                 self._process_sequence(seq_name, split)
 
         # Write dataset.yaml inline (only used here)
@@ -168,16 +170,16 @@ class DataPipeline:
                 "train": "images/train", "val": "images/val", "test": "images/test",
                 "nc": self.num_classes, "names": ["car"],
             }, f, default_flow_style=False)
-        print(f"  Wrote {yaml_path}")
+        self.logger.info(f"Wrote {yaml_path}")
 
         self._validate()
         self.summary()
-        print("Setup complete.")
+        self.logger.info("Setup complete.")
 
     def _process_sequence(self, seq_name: str, split: str) -> None:
         # Parse annotations for one sequence, then extract frames (.mp4) or copy (.png)
         seq_dir = self._find_path(seq_name, is_dir=True)
-        xml_path = self._find_path(seq_name, is_dir=False, suffix=".xml")
+        xml_path = self._find_xml(seq_dir, seq_name)
         frame_annotations = self._parse_cvat_xml(ET.parse(xml_path).getroot())
 
         mp4_files = list(seq_dir.glob("*.mp4"))
@@ -252,10 +254,10 @@ class DataPipeline:
                     frame_idx += 1
             except StopIteration:
                 pass
-            print(f"    DALI: extracted {len(annotated_set)} frames from {mp4_path.name}")
+            self.logger.info(f"DALI: extracted {len(annotated_set)} frames from {mp4_path.name}")
 
         except (ImportError, RuntimeError) as e:
-            print(f"    DALI unavailable ({e}), falling back to OpenCV")
+            self.logger.warning(f"DALI unavailable ({e}), falling back to OpenCV")
             cap = cv2.VideoCapture(str(mp4_path))
             if not cap.isOpened():
                 raise RuntimeError(f"Cannot open video: {mp4_path}")
@@ -272,7 +274,7 @@ class DataPipeline:
                     saved += 1
                 frame_idx += 1
             cap.release()
-            print(f"    OpenCV: extracted {saved} frames from {mp4_path.name}")
+            self.logger.info(f"OpenCV: extracted {saved} frames from {mp4_path.name}")
 
     def _copy_png_frames(self, png_files, frame_annotations, split, seq_name) -> None:
         # Copy pre-extracted .png frames that have annotations, write YOLO labels
@@ -288,7 +290,7 @@ class DataPipeline:
                 self._write_yolo_label(lbl_dir / f"{name}.txt", frame_annotations[frame_idx])
                 saved += 1
 
-        print(f"    Copied {saved} annotated frames from {seq_name}")
+        self.logger.info(f"Copied {saved} annotated frames from {seq_name}")
 
     def _find_path(self, seq_name: str, is_dir: bool = True, suffix: str = "") -> Path:
         # Locate a file or directory by name, handling space/underscore differences
@@ -314,6 +316,13 @@ class DataPipeline:
 
         kind = "directory" if is_dir else f"'{suffix}' file"
         raise FileNotFoundError(f"No {kind} found for '{seq_name}' in {self.raw_dir}")
+
+    def _find_xml(self, seq_dir: Path, seq_name: str) -> Path:
+        # Find the XML annotation file inside the sequence directory
+        xml_files = list(seq_dir.glob("*.xml"))
+        if xml_files:
+            return xml_files[0]
+        raise FileNotFoundError(f"No .xml file found in {seq_dir} for '{seq_name}'")
 
     def _write_yolo_label(self, path: Path, annotations: list[list[float]]) -> None:
         # Write one YOLO label file: class_id x_center y_center width height per line
@@ -349,7 +358,7 @@ class DataPipeline:
                         if not all(0.0 <= float(v) <= 1.0 for v in parts[1:]):
                             raise ValueError(f"{lbl_file.name}:{ln}: values out of [0,1]")
 
-        print("  Validation passed.")
+        self.logger.info("Validation passed.")
 
     def _exists(self) -> bool:
         # Check if processed YOLO data already exists with all splits populated

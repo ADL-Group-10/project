@@ -39,7 +39,7 @@ class SnowAugmentation:
             bl = cfg["blur"]
             transforms.append(
                 A.GaussianBlur(
-                    blur_limit=bl["blur_limit"],
+                    blur_limit=tuple(bl["blur_limit"]),
                     p=bl["p"],
                 )
             )
@@ -49,7 +49,7 @@ class SnowAugmentation:
             bj = cfg["brightness_jitter"]
             transforms.append(
                 A.RandomBrightnessContrast(
-                    brightness_limit=bj["brightness_limit"],
+                    brightness_limit=tuple(bj["brightness_limit"]),
                     contrast_limit=0,
                     p=bj["p"],
                 )
