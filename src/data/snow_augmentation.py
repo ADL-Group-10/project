@@ -60,8 +60,7 @@ class SnowAugmentation:
             so = cfg["snow_overlay"]
             transforms.append(
                 A.RandomSnow(
-                    snow_point_lower=so["snow_point_lower"],
-                    snow_point_upper=so["snow_point_upper"],
+                    snow_point_range=(so["snow_point_lower"], so["snow_point_upper"]),
                     p=so["p"],
                 )
             )
