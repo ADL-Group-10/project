@@ -377,29 +377,31 @@ if __name__ == "__main__":
     pipeline = DataPipeline()
     stats = pipeline.summary()
 
-    # Pick a sample image
+    # Pick 3 sample images
     img_dir = pipeline.output_dir / "images" / "train"
     lbl_dir = pipeline.output_dir / "labels" / "train"
-    sample_path = list(img_dir.glob("*.png"))[0]
-    image = cv2.cvtColor(cv2.imread(str(sample_path)), cv2.COLOR_BGR2RGB)
-    bboxes, class_labels = DataPipeline._read_yolo_label(lbl_dir / (sample_path.stem + ".txt"))
+    sample_paths = list(img_dir.glob("*.png"))[:3]
 
     samples_dir = pipeline.output_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
 
-    # Save raw, base augmented, and snow augmented for comparison
-    for mode in ("raw", "base", "snow"):
-        if mode == "raw":
-            out_img = DataPipeline._draw_bboxes(image.copy(), bboxes)
-        else:
-            _, aug = pipeline.run(augment=mode)
-            result = aug(image=image, bboxes=bboxes, class_labels=class_labels)
-            aug_img = result["image"]
-            mean = np.array([0.485, 0.456, 0.406])
-            std = np.array([0.229, 0.224, 0.225])
-            out_img = ((aug_img * std + mean) * 255).clip(0, 255).astype(np.uint8)
-            out_img = DataPipeline._draw_bboxes(out_img, result["bboxes"])
+    for i, sample_path in enumerate(sample_paths):
+        image = cv2.cvtColor(cv2.imread(str(sample_path)), cv2.COLOR_BGR2RGB)
+        bboxes, class_labels = DataPipeline._read_yolo_label(lbl_dir / (sample_path.stem + ".txt"))
 
-        out_path = samples_dir / f"sample_{mode}.png"
-        cv2.imwrite(str(out_path), cv2.cvtColor(out_img, cv2.COLOR_RGB2BGR))
-        print(f"{mode} -> saved {out_path}")
+        # Save raw, base augmented, and snow augmented for comparison
+        for mode in ("raw", "base", "snow"):
+            if mode == "raw":
+                out_img = DataPipeline._draw_bboxes(image.copy(), bboxes)
+            else:
+                _, aug = pipeline.run(augment=mode)
+                result = aug(image=image, bboxes=bboxes, class_labels=class_labels)
+                aug_img = result["image"]
+                mean = np.array([0.485, 0.456, 0.406])
+                std = np.array([0.229, 0.224, 0.225])
+                out_img = ((aug_img * std + mean) * 255).clip(0, 255).astype(np.uint8)
+                out_img = DataPipeline._draw_bboxes(out_img, result["bboxes"])
+
+            out_path = samples_dir / f"sample_{i+1}_{mode}.png"
+            cv2.imwrite(str(out_path), cv2.cvtColor(out_img, cv2.COLOR_RGB2BGR))
+            print(f"sample {i+1} {mode} -> saved {out_path}")
