@@ -1,4 +1,4 @@
-"""Data Pipeline — NVD to YOLO preparation with GPU-accelerated frame extraction."""
+"""Data Pipeline — NVD to YOLO preparation with decord frame extraction."""
 
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -16,24 +16,20 @@ class DataPipeline:
     """Single entry point for NVD dataset preparation.
 
     Usage:
-        pipeline = DataPipeline("config.yaml")
-        path, aug = pipeline.run(augment="none")    # resize + normalize only
-        path, aug = pipeline.run(augment="base")    # base augmentation
-        path, aug = pipeline.run(augment="snow")    # base + snow augmentation
+        pipeline = DataPipeline()
+        path, aug = pipeline.run(augment="snow")                    # single pipeline
+        path, augs = pipeline.run(augment="snow", domain_shift=True) # per-split pipelines
     """
 
     _FRAME_WIDTH = 1920
     _FRAME_HEIGHT = 1080
 
     def __init__(self, config_path: str = "config.yaml", variant: str | None = None) -> None:
-        """Load config and prepare dataset if YOLO files don't exist yet."""
         self.config = load_config(config_path, variant=variant)
         self.logger = get_logger(__name__, self.config)
-
         set_seed_from_config(self.config)
 
-        paths = get_paths(self.config, create_dirs=False)
-        self.raw_dir = paths.nvd_root
+        self.raw_dir = get_paths(self.config, create_dirs=False).nvd_root
         self.output_dir = Path(self.config.paths.yolo_output)
         self.splits = self.config.paths.splits
         self.img_size = self.config.model.img_size
@@ -45,15 +41,49 @@ class DataPipeline:
 
     # ── Public ─────────────────────────────────────────────────
 
-    def run(self, augment: str = "none") -> tuple[Path, A.Compose]:
-        # Build augmentation pipeline based on variant: none / base / snow
+    def run(self, augment: str = "none", domain_shift: bool = False):
+        """Build augmentation pipeline(s).
+
+        Returns:
+            (output_dir, pipeline) or (output_dir, {"train": ..., "val": ..., "test": ...})
+        """
         if augment not in ("none", "base", "snow"):
             raise ValueError(f"augment must be 'none', 'base', or 'snow', got '{augment}'")
 
+        if domain_shift:
+            ds_cfg = self.config.domain_shift
+            return self.output_dir, {
+                "train": self._build_pipeline(augment, snow_config=ds_cfg.light_snow),
+                "val":   self._build_pipeline(augment, snow_config=ds_cfg.light_snow),
+                "test":  self._build_pipeline(augment, snow_config=ds_cfg.heavy_snow),
+            }
+
+        return self.output_dir, self._build_pipeline(augment)
+
+    def summary(self) -> dict:
+        stats = {}
+        for split in ("train", "val", "test"):
+            img_dir = self.output_dir / "images" / split
+            lbl_dir = self.output_dir / "labels" / split
+
+            num_images = len(list(img_dir.glob("*.png")))
+            total_bboxes = 0
+            for lbl_file in lbl_dir.glob("*.txt"):
+                with open(lbl_file) as f:
+                    total_bboxes += sum(1 for line in f if line.strip())
+
+            avg_bboxes = total_bboxes / num_images if num_images > 0 else 0
+            stats[split] = {"images": num_images, "annotations": total_bboxes, "avg_bboxes": round(avg_bboxes, 2)}
+            self.logger.info(f"{split:>5s}: {num_images:>6d} images | {total_bboxes:>6d} bboxes | {avg_bboxes:.2f} avg/img")
+
+        return stats
+
+    # ── Private ────────────────────────────────────────────────
+
+    def _build_pipeline(self, augment: str, snow_config=None) -> A.Compose:
         transforms = []
         std = self.aug_config["standard"]
 
-        # Base transforms (geometric + color) for base and snow variants
         if augment in ("base", "snow"):
             transforms += [
                 A.HorizontalFlip(p=std["horizontal_flip_p"]),
@@ -65,92 +95,21 @@ class DataPipeline:
                 ),
             ]
 
-        # Snow transforms on top of base
         if augment == "snow":
-            snow_aug = SnowAugmentation(self.aug_config["snow"])
-            transforms += snow_aug.get()
+            cfg = snow_config if snow_config else self.aug_config["snow"]
+            transforms += SnowAugmentation(cfg).get()
 
-        # Always applied: resize + normalize
         transforms += [
             A.Resize(height=self.img_size, width=self.img_size),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
 
-        pipeline = A.Compose(
+        return A.Compose(
             transforms,
-            bbox_params=A.BboxParams(
-                format="yolo", label_fields=["class_labels"], min_visibility=0.3,
-            ),
+            bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels"], min_visibility=0.3),
         )
 
-        return self.output_dir, pipeline
-
-    def summary(self) -> dict:
-        # Print and return per-split image count, bbox count, avg bboxes per image
-        stats = {}
-        for split in ("train", "val", "test"):
-            img_dir = self.output_dir / "images" / split
-            lbl_dir = self.output_dir / "labels" / split
-
-            images = list(img_dir.glob("*.png")) + list(img_dir.glob("*.jpg"))
-            num_images = len(images)
-
-            total_bboxes = 0
-            for lbl_file in lbl_dir.glob("*.txt"):
-                with open(lbl_file) as f:
-                    total_bboxes += sum(1 for line in f if line.strip())
-
-            avg_bboxes = total_bboxes / num_images if num_images > 0 else 0
-            stats[split] = {
-                "images": num_images,
-                "annotations": total_bboxes,
-                "avg_bboxes": round(avg_bboxes, 2),
-            }
-            self.logger.info(f"{split:>5s}: {num_images:>6d} images | {total_bboxes:>6d} bboxes | {avg_bboxes:.2f} avg/img")
-
-        return stats
-
-    def show_samples(self, n: int = 5, split: str = "train", augment: str = "none") -> None:
-        # Display n random images with bboxes, side-by-side with augmented version if augment != "none"
-        import matplotlib.pyplot as plt
-
-        img_dir = self.output_dir / "images" / split
-        lbl_dir = self.output_dir / "labels" / split
-
-        images = list(img_dir.glob("*.png")) + list(img_dir.glob("*.jpg"))
-        chosen = np.random.choice(images, size=min(n, len(images)), replace=False)
-
-        _, aug_pipeline = self.run(augment=augment)
-        cols = 2 if augment != "none" else 1
-        fig, axes = plt.subplots(n, cols, figsize=(6 * cols, 4 * n))
-        if n == 1:
-            axes = np.array([axes])
-        if cols == 1:
-            axes = axes.reshape(-1, 1)
-
-        for i, img_path in enumerate(chosen):
-            image = cv2.cvtColor(cv2.imread(str(img_path)), cv2.COLOR_BGR2RGB)
-            lbl_path = lbl_dir / (img_path.stem + ".txt")
-            bboxes, class_labels = self._read_yolo_label(lbl_path)
-
-            axes[i, 0].imshow(self._draw_bboxes(image.copy(), bboxes))
-            axes[i, 0].set_title(f"Original — {img_path.name}")
-            axes[i, 0].axis("off")
-
-            if cols == 2:
-                result = aug_pipeline(image=image, bboxes=bboxes, class_labels=class_labels)
-                aug_img = (result["image"] * 255).astype(np.uint8)
-                axes[i, 1].imshow(self._draw_bboxes(aug_img, result["bboxes"]))
-                axes[i, 1].set_title(f"Augmented ({augment})")
-                axes[i, 1].axis("off")
-
-        plt.tight_layout()
-        plt.show()
-
-    # ── Private ────────────────────────────────────────────────
-
     def _setup(self) -> None:
-        # One-time setup: parse XML, extract frames, organize splits, validate
         self.logger.info("Setting up YOLO dataset from NVD...")
 
         for split in ("train", "val", "test"):
@@ -162,7 +121,6 @@ class DataPipeline:
                 self.logger.info(f"Processing {seq_name} -> {split}")
                 self._process_sequence(seq_name, split)
 
-        # Write dataset.yaml inline (only used here)
         yaml_path = self.output_dir / "dataset.yaml"
         with open(yaml_path, "w") as f:
             yaml.dump({
@@ -177,15 +135,14 @@ class DataPipeline:
         self.logger.info("Setup complete.")
 
     def _process_sequence(self, seq_name: str, split: str) -> None:
-        # Parse annotations for one sequence, then extract frames (.mp4) or copy (.png)
-        seq_dir = self._find_path(seq_name, is_dir=True)
-        xml_path = self._find_xml(seq_dir, seq_name)
+        seq_dir = self._find_dir(seq_name)
+        xml_path = self._find_xml(seq_dir)
         frame_annotations = self._parse_cvat_xml(ET.parse(xml_path).getroot())
 
         mp4_files = [f for f in seq_dir.iterdir() if f.suffix.lower() == ".mp4"]
         png_files = sorted(f for f in seq_dir.iterdir() if f.suffix.lower() == ".png")
 
-        # Handle nested subdirectory (e.g. PNG sequences extracted into a same-named subfolder)
+        # Handle nested subdirectory (e.g. PNG test sequence)
         if not mp4_files and not png_files:
             for child in seq_dir.iterdir():
                 if child.is_dir():
@@ -193,15 +150,17 @@ class DataPipeline:
                     if png_files:
                         break
 
+        img_dir = self.output_dir / "images" / split
+        lbl_dir = self.output_dir / "labels" / split
+
         if mp4_files:
-            self._extract_frames(mp4_files[0], frame_annotations, split, seq_name)
+            self._extract_frames(mp4_files[0], frame_annotations, img_dir, lbl_dir, seq_name)
         elif png_files:
-            self._copy_png_frames(png_files, frame_annotations, split, seq_name)
+            self._copy_png_frames(png_files, frame_annotations, img_dir, lbl_dir, seq_name)
         else:
             raise FileNotFoundError(f"No .mp4 or .png files found in {seq_dir}")
 
     def _parse_cvat_xml(self, root: ET.Element) -> dict[int, list[list[float]]]:
-        # Convert CVAT tracks (xtl/ytl/xbr/ybr pixels) to per-frame YOLO labels (normalized center+size)
         frame_annotations: dict[int, list[list[float]]] = {}
 
         for track in root.findall(".//track"):
@@ -232,15 +191,11 @@ class DataPipeline:
 
         return frame_annotations
 
-    def _extract_frames(self, mp4_path, frame_annotations, split, seq_name) -> None:
-        # Extract annotated frames from .mp4 using decord (random access)
+    def _extract_frames(self, mp4_path, frame_annotations, img_dir, lbl_dir, seq_name) -> None:
         import decord
         decord.bridge.set_bridge("native")
 
-        img_dir = self.output_dir / "images" / split
-        lbl_dir = self.output_dir / "labels" / split
         annotated_indices = sorted(frame_annotations.keys())
-
         vr = decord.VideoReader(str(mp4_path), ctx=decord.cpu(0))
         self.logger.info(f"decord: extracting {len(annotated_indices)} frames from {mp4_path.name}")
 
@@ -255,68 +210,49 @@ class DataPipeline:
 
         self.logger.info(f"decord: done -- {len(annotated_indices)} frames from {mp4_path.name}")
 
-    def _copy_png_frames(self, png_files, frame_annotations, split, seq_name) -> None:
-        # Copy pre-extracted .png frames that have annotations, write YOLO labels
+    def _copy_png_frames(self, png_files, frame_annotations, img_dir, lbl_dir, seq_name) -> None:
         import shutil
-        img_dir = self.output_dir / "images" / split
-        lbl_dir = self.output_dir / "labels" / split
         saved = 0
-
         for frame_idx, png_path in enumerate(png_files):
             if frame_idx in frame_annotations:
                 name = f"{seq_name}_frame_{frame_idx:06d}"
                 shutil.copy2(png_path, img_dir / f"{name}.png")
                 self._write_yolo_label(lbl_dir / f"{name}.txt", frame_annotations[frame_idx])
                 saved += 1
-
         self.logger.info(f"Copied {saved} annotated frames from {seq_name}")
 
-    def _find_path(self, seq_name: str, is_dir: bool = True, suffix: str = "") -> Path:
-        # Locate a file or directory by name, handling space/underscore differences
-        candidates = [
-            seq_name,
-            seq_name.replace(" ", "_"),
-        ]
-
-        for name in candidates:
-            path = self.raw_dir / (name + suffix) if not is_dir else self.raw_dir / name
+    def _find_dir(self, seq_name: str) -> Path:
+        for name in [seq_name, seq_name.replace(" ", "_")]:
+            path = self.raw_dir / name
             if path.exists():
                 return path
 
-        # Fuzzy fallback — normalize both sides
-        norm_seq = seq_name.lower().replace(" ", "_")
+        norm = seq_name.lower().replace(" ", "_")
         for item in self.raw_dir.iterdir():
-            if is_dir and not item.is_dir():
-                continue
-            if not is_dir and item.suffix != suffix:
-                continue
-            if item.stem.lower().replace(" ", "_") == norm_seq:
+            if item.is_dir() and item.stem.lower().replace(" ", "_") == norm:
                 return item
 
-        kind = "directory" if is_dir else f"'{suffix}' file"
-        raise FileNotFoundError(f"No {kind} found for '{seq_name}' in {self.raw_dir}")
+        raise FileNotFoundError(f"No directory found for '{seq_name}' in {self.raw_dir}")
 
-    def _find_xml(self, seq_dir: Path, seq_name: str) -> Path:
-        # Find the XML annotation file inside the sequence directory
+    def _find_xml(self, seq_dir: Path) -> Path:
         xml_files = list(seq_dir.glob("*.xml"))
         if xml_files:
             return xml_files[0]
-        raise FileNotFoundError(f"No .xml file found in {seq_dir} for '{seq_name}'")
+        raise FileNotFoundError(f"No .xml file found in {seq_dir}")
 
     def _write_yolo_label(self, path: Path, annotations: list[list[float]]) -> None:
-        # Write one YOLO label file: class_id x_center y_center width height per line
         with open(path, "w") as f:
             for ann in annotations:
-                f.write(" ".join(f"{v:.6f}" if i > 0 else str(int(v))
-                                for i, v in enumerate(ann)) + "\n")
+                cls_id = int(ann[0])
+                coords = " ".join(f"{v:.6f}" for v in ann[1:])
+                f.write(f"{cls_id} {coords}\n")
 
     def _validate(self) -> None:
-        # Check every image has a matching label, every label has valid YOLO format
         for split in ("train", "val", "test"):
             img_dir = self.output_dir / "images" / split
             lbl_dir = self.output_dir / "labels" / split
 
-            images = {p.stem for p in img_dir.glob("*.png")} | {p.stem for p in img_dir.glob("*.jpg")}
+            images = {p.stem for p in img_dir.glob("*.png")}
             labels = {p.stem for p in lbl_dir.glob("*.txt")}
 
             if images - labels:
@@ -340,7 +276,6 @@ class DataPipeline:
         self.logger.info("Validation passed.")
 
     def _exists(self) -> bool:
-        # Check if processed YOLO data already exists with all splits populated
         for sub in ("images/train", "images/val", "images/test",
                      "labels/train", "labels/val", "labels/test"):
             d = self.output_dir / sub
@@ -350,7 +285,6 @@ class DataPipeline:
 
     @staticmethod
     def _read_yolo_label(path: Path) -> tuple[list, list]:
-        # Read YOLO label file, return (bboxes, class_labels)
         bboxes, class_labels = [], []
         if path.exists():
             with open(path) as f:
@@ -363,7 +297,6 @@ class DataPipeline:
 
     @staticmethod
     def _draw_bboxes(image: np.ndarray, bboxes: list) -> np.ndarray:
-        # Draw YOLO-format bboxes on image for visualization
         h, w = image.shape[:2]
         for bbox in bboxes:
             x_c, y_c, bw, bh = bbox
@@ -375,9 +308,8 @@ class DataPipeline:
 
 if __name__ == "__main__":
     pipeline = DataPipeline()
-    stats = pipeline.summary()
+    pipeline.summary()
 
-    # Pick 3 sample images
     img_dir = pipeline.output_dir / "images" / "train"
     lbl_dir = pipeline.output_dir / "labels" / "train"
     sample_paths = list(img_dir.glob("*.png"))[:3]
@@ -385,23 +317,31 @@ if __name__ == "__main__":
     samples_dir = pipeline.output_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
 
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+
+    def save_augmented(image, bboxes, class_labels, aug, path):
+        result = aug(image=image, bboxes=bboxes, class_labels=class_labels)
+        out_img = ((result["image"] * std + mean) * 255).clip(0, 255).astype(np.uint8)
+        out_img = DataPipeline._draw_bboxes(out_img, result["bboxes"])
+        cv2.imwrite(str(path), cv2.cvtColor(out_img, cv2.COLOR_RGB2BGR))
+
     for i, sample_path in enumerate(sample_paths):
         image = cv2.cvtColor(cv2.imread(str(sample_path)), cv2.COLOR_BGR2RGB)
         bboxes, class_labels = DataPipeline._read_yolo_label(lbl_dir / (sample_path.stem + ".txt"))
 
-        # Save raw, base augmented, and snow augmented for comparison
         for mode in ("raw", "base", "snow"):
+            out_path = samples_dir / f"sample_{i+1}_{mode}.png"
             if mode == "raw":
                 out_img = DataPipeline._draw_bboxes(image.copy(), bboxes)
+                cv2.imwrite(str(out_path), cv2.cvtColor(out_img, cv2.COLOR_RGB2BGR))
             else:
                 _, aug = pipeline.run(augment=mode)
-                result = aug(image=image, bboxes=bboxes, class_labels=class_labels)
-                aug_img = result["image"]
-                mean = np.array([0.485, 0.456, 0.406])
-                std = np.array([0.229, 0.224, 0.225])
-                out_img = ((aug_img * std + mean) * 255).clip(0, 255).astype(np.uint8)
-                out_img = DataPipeline._draw_bboxes(out_img, result["bboxes"])
+                save_augmented(image, bboxes, class_labels, aug, out_path)
+            print(f"sample {i+1} {mode} -> {out_path}")
 
-            out_path = samples_dir / f"sample_{i+1}_{mode}.png"
-            cv2.imwrite(str(out_path), cv2.cvtColor(out_img, cv2.COLOR_RGB2BGR))
-            print(f"sample {i+1} {mode} -> saved {out_path}")
+        _, ds_augs = pipeline.run(augment="snow", domain_shift=True)
+        for ds_mode, ds_key in [("light_snow", "train"), ("heavy_snow", "test")]:
+            out_path = samples_dir / f"sample_{i+1}_{ds_mode}.png"
+            save_augmented(image, bboxes, class_labels, ds_augs[ds_key], out_path)
+            print(f"sample {i+1} {ds_mode} -> {out_path}")

@@ -56,6 +56,9 @@ path, aug = pipeline.run(augment="none")    # resize + normalize only
 path, aug = pipeline.run(augment="base")    # + geometric, HSV jitter
 path, aug = pipeline.run(augment="snow")    # + snow-aware transforms
 
+# Domain shift: per-split augmentation (light snow train/val, heavy snow test)
+path, augs = pipeline.run(augment="snow", domain_shift=True)
+
 # Inspect
 pipeline.summary()                          # per-split image/bbox counts
 pipeline.show_samples(n=5, augment="snow")  # visual sanity check
@@ -94,3 +97,28 @@ augmentation.snow       # snow augmentation params
 | 2022-12-02 Asjo 01_stabilized | Train | .mp4 |
 | 2022-12-03 Nyland 01_stabilized | Val | .mp4 |
 | 2022-12-23 Bjenberg 02_stabilized | Test | .png |
+
+#### Domain shift experiment
+
+Tests how well the model generalizes from light-snow to heavy-snow conditions. Same dataset, different augmentation intensity per split:
+
+| Split | Augmentation |
+|-------|-------------|
+| Train | Light snow (low probability, subtle) |
+| Val | Light snow |
+| Test | Heavy snow (high probability, intense) |
+
+```python
+pipeline = DataPipeline()
+
+# Standard: single pipeline for all splits
+path, aug = pipeline.run(augment="snow")
+
+# Domain shift: per-split pipelines with different snow intensity
+path, augs = pipeline.run(augment="snow", domain_shift=True)
+# augs["train"] -> light snow pipeline
+# augs["val"]   -> light snow pipeline
+# augs["test"]  -> heavy snow pipeline
+```
+
+Light/heavy snow params defined in `config.yaml -> domain_shift.light_snow` and `domain_shift.heavy_snow`.

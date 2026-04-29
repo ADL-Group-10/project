@@ -165,6 +165,44 @@ logging:
 
 # ── domain-shift sub-experiment ───────────────────────────────────────────────
 # Owned by Achyuth. Set enabled: true when running the sub-experiment notebook.
-# Sequence lists are defined above under paths.domain_shift.
+# Train/val get light snow augmentation, test gets heavy snow augmentation.
 domain_shift:
   enabled: false
+
+  light_snow:                # applied to train + val splits
+    desaturation:
+      enabled:          true
+      saturation_limit: [-0.3, -0.1]
+      p:                0.3
+    blur:
+      enabled:          true
+      blur_limit:       [3, 5]
+      p:                0.2
+    brightness_jitter:
+      enabled:          true
+      brightness_limit: [-0.08, 0.03]
+      p:                0.3
+    snow_overlay:
+      enabled:          true
+      snow_point_lower: 0.05
+      snow_point_upper: 0.15
+      p:                0.2
+
+  heavy_snow:                # applied to test split
+    desaturation:
+      enabled:          true
+      saturation_limit: [-0.8, -0.4]
+      p:                0.8
+    blur:
+      enabled:          true
+      blur_limit:       [5, 11]
+      p:                0.7
+    brightness_jitter:
+      enabled:          true
+      brightness_limit: [-0.25, -0.05]
+      p:                0.8
+    snow_overlay:
+      enabled:          true
+      snow_point_lower: 0.2
+      snow_point_upper: 0.5
+      p:                0.6
