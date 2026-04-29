@@ -371,3 +371,12 @@ class DataPipeline:
             x2, y2 = int((x_c + bw / 2) * w), int((y_c + bh / 2) * h)
             cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
         return image
+
+
+if __name__ == "__main__":
+    pipeline = DataPipeline()
+    stats = pipeline.summary()
+
+    for mode in ("none", "base", "snow"):
+        path, aug = pipeline.run(augment=mode)
+        print(f"augment='{mode}' -> {path}")
