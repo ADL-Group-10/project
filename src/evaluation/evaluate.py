@@ -29,22 +29,8 @@ class Evaluator:
                 )
     
             self.model = YOLO(str(weights))
-        self.dataset_yaml = "/project/outputs/yolo/dataset.yaml"
-        '''
-    def __init__(self, variant: str) -> None:
-        self.variant = variant
-        self.cfg = load_config(variant=variant)
-        
-        weights = Path(self.cfg.paths.results_dir) / self.variant / "weights" / "best.pt"
-        if not weights.exists():
-            raise FileNotFoundError(f"Weights not found at {weights}")
+            self.dataset_yaml = "/project/outputs/yolo/dataset.yaml"
 
-        self.model = YOLO(str(weights))
-  
-        # Note: In V3, ensure your DataPipeline has generated this dataset.yaml
-        self.dataset_yaml = "/project/outputs/yolo/dataset.yaml"
-        print(f"[evaluator] Loaded {variant} from {weights}")
-   '''
     def run(self) -> dict:
         """Evaluate on test split."""
         metrics = self.model.val(
