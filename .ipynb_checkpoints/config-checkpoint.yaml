@@ -5,166 +5,194 @@
 # =============================================================================
 
 project:
-  name:       "nvd-snow-yolov9"
-  group:      "group-10"
-  seed:       42
-  device:     "cuda:0"     # graceful cpu fallback handled in device.py
-  log_level:  "INFO"       # DEBUG | INFO | WARNING | ERROR
-
-# variant flag
+  name: nvd-snow-yolov9
+  group: group-10
+  seed: 42
+  device: cuda:0
+  log_level: INFO
 variants:
-  active: "v1"             # variant= at runtime
-
+  active: v1
   v1:
-    experiment:    "v1_baseline"
-    use_snow_aug:  false
+    experiment: v1_baseline
+    use_snow_aug: false
     training:
-      epochs:      100
-      lr:          0.001
-
+      epochs: 100
+      lr: 0.00019010245319870352
   v2:
-    experiment:    "v2_snow_aug"
-    use_snow_aug:  true
+    experiment: v2_snow_aug
+    use_snow_aug: true
     training:
-      epochs:      120
-      lr:          0.0008
-
-# paths — call get_paths(cfg)
+      epochs: 100
+      lr: 0.00019010245319870352
 paths:
-  nvd_root:         "src/data/NVD"
-  yolo_output:      "outputs/yolo"
-  checkpoints_dir:  "outputs/checkpoints"
-  results_dir:      "outputs/results"
-  optuna_db:        "outputs/optuna/study.db"
-  wandb_dir:        "outputs/wandb"
-  log_dir:          "outputs/logs"
-
+  nvd_root: /project/src/data/NVD
+  yolo_output: /project/outputs/yolo
+  checkpoints_dir: /project/outputs/checkpoints
+  results_dir: /project/outputs/results
+  optuna_db: /project/outputs/optuna/study.db
+  wandb_dir: /project/outputs/wandb
+  log_dir: /project/outputs/logs
   splits:
     train:
-      - "2022-12-04 Bjenberg 02"
-      - "2022-12-23 Asjo 01_HD 5x stab"
-      - "2022-12-02 Asjo 01_stabilized"
+    - 2022-12-04 Bjenberg 02
+    - 2022-12-23 Asjo 01_HD 5x stab
+    - 2022-12-02 Asjo 01_stabilized
     val:
-      - "2022-12-03 Nyland 01_stabilized"
+    - 2022-12-03 Nyland 01_stabilized
     test:
-      - "2022-12-23 Bjenberg 02_stabilized"
-
-  # Data Pipeline - domain-shift experiment
+    - 2022-12-23 Bjenberg 02_stabilized
   domain_shift:
     light_snow:
-      - "2022-12-02 Asjo 01_stabilized"
+    - 2022-12-02 Asjo 01_stabilized
     heavy_snow:
-      - "2022-12-23 Bjenberg 02_stabilized"
-
-# model
+    - 2022-12-23 Bjenberg 02_stabilized
 model:
-  architecture:     "yolov9"
-  weights:          "yolov9-c.pt"      # pretrained weights filename
-  yolov9_repo:      "third_party/yolov9"
-  num_classes:      1
-  img_size:         640
-  freeze_backbone:  false
-
-# training
-# Owned by Dharmini - Variant block above overrides epochs + lr per run.
-# Owned by Sathish - Optuna writes best lr, batch_size, warmup_epochs back here before Dharmini runs the final V1 / V2 training.
+  architecture: yolov9
+  weights: yolov9-c.pt
+  yolov9_repo: third_party/yolov9
+  num_classes: 1
+  img_size: 640
+  freeze_backbone: false
 training:
-  epochs:                   100
-  batch_size:               16
-  num_workers:              4
-  optimizer:                "adam"
-  lr:                       0.001
-  lr_scheduler:             "cosine"
-  warmup_epochs:            3
-  weight_decay:             0.0005
-  early_stopping_patience:  15
-  save_every_n_epochs:      10
-  val_every_n_epochs:       5
-
-# loss
-# Owned by Dharmini. Sathish tunes box_weight + focal_gamma.
+  epochs: 100
+  batch_size: 16
+  num_workers: 4
+  optimizer: adam
+  lr: 0.00019010245319870352
+  lr_scheduler: cosine
+  warmup_epochs: 3
+  weight_decay: 0.0005
+  early_stopping_patience: 15
+  save_every_n_epochs: 10
+  val_every_n_epochs: 5
 loss:
-  box_weight:    7.5     # localization (IoU) loss weight
-  cls_weight:    0.5     # BCE classification loss weight
-  dfl_weight:    1.5     # distribution focal loss weight
-  focal_gamma:   1.5     # focal loss gamma — 0.0 disables focal term
-  use_pgi:       true    # auxiliary PGI loss (YOLOv9-specific)
-
-# augmentation
-# Owned by Achyuth
-# standard: applied to both V1 and V2 dataloaders.
-# snow:     applied only when use_snow_aug: true  (V2 variant only).
+  box_weight: 8.925879806965067
+  cls_weight: 0.5
+  dfl_weight: 1.5
+  focal_gamma: 0.8993475643167195
+  use_pgi: true
 augmentation:
-  use_snow_aug: false      # overridden by the active variant block above
-
-  standard:                # baseline Albumentations transforms
+  use_snow_aug: false
+  standard:
     horizontal_flip_p: 0.5
-    hsv_h:             0.015
-    hsv_s:             0.7
-    hsv_v:             0.4
-    mosaic_p:          0.8
-
-  snow:                    # snow-aware Albumentations transforms
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    mosaic_p: 0.8
+  snow:
     desaturation:
-      enabled:          true
-      saturation_limit: [-0.6, -0.2]   # overcast winter lighting
-      p:                0.6
+      enabled: true
+      saturation_limit:
+      - -0.6
+      - -0.2
+      p: 0.6
     blur:
-      enabled:          true
-      blur_limit:       [3, 7]
-      streak_p:         0.3            # lens-snow streak overlay probability
-      p:                0.5
+      enabled: true
+      blur_limit:
+      - 3
+      - 7
+      streak_p: 0.3
+      p: 0.5
     brightness_jitter:
-      enabled:          true
-      brightness_limit: [-0.15, 0.05] # narrow low-end shift for short daylight
-      p:                0.7
+      enabled: true
+      brightness_limit:
+      - -0.15
+      - 0.05
+      p: 0.7
     snow_overlay:
-      enabled:          true
+      enabled: true
       snow_point_lower: 0.1
       snow_point_upper: 0.3
-      p:                0.4
-
-# ── evaluation ────────────────────────────────────────────────────────────────
-# Owned by TBD
+      p: 0.4
 evaluation:
-  iou_threshold:            0.5
-  conf_threshold:           0.25
-  iou_range:                [0.50, 0.95, 0.05]  # mAP50-95 sweep
-  measure_inference_speed:  true
-  speed_warmup_iters:       50
-  speed_eval_iters:         200
-
-# ── Optuna hyperparameter tuning ──────────────────────────────────────────────
-# Owned by Sathish
-# Always tune on V1 (no snow aug, clean baseline).
-# After study completes, write best values into training + loss blocks above, then Dharmini reruns V1 and V2 with those locked HP.
+  iou_threshold: 0.5
+  conf_threshold: 0.25
+  iou_range:
+  - 0.5
+  - 0.95
+  - 0.05
+  measure_inference_speed: true
+  speed_warmup_iters: 50
+  speed_eval_iters: 200
 tuning:
-  n_trials:         30
-  timeout_seconds:  7200           # 2-hour hard budget cap
-  trial_epochs:     15             # per-trial epoch cap during hyperparameter search
-  direction:        "maximize"     # maximise val mAP50
-  metric:           "val_map50"
-  pruner:           "hyperband"    # HyperbandPruner — best for DL training
-  sampler:          "tpe"          # TPE default — efficient for <100 trials
-  study_name:       "nvd-yolov9-hp"
-
-  search_space:     # Sathish tunes these
-    lr:             [1.0e-4, 1.0e-2]   # log-uniform
-    batch_size:     [8, 16, 32]         # categorical
-    box_weight:     [5.0, 10.0]         # uniform
-    focal_gamma:    [0.5, 2.5]          # uniform
-    warmup_epochs:  [1, 5]              # int
-
-# ── Weights & Biases ──────────────────────────────────────────────────────────
+  n_trials: 30
+  timeout_seconds: 7200
+  trial_epochs: 15
+  direction: maximize
+  metric: val_map50
+  pruner: hyperband
+  sampler: tpe
+  study_name: nvd-yolov9-hp
+  search_space:
+    lr:
+    - 0.0001
+    - 0.01
+    batch_size:
+    - 8
+    - 16
+    - 32
+    box_weight:
+    - 5.0
+    - 10.0
+    focal_gamma:
+    - 0.5
+    - 2.5
+    warmup_epochs:
+    - 1
+    - 5
 logging:
-  wandb_project:              "nvd-snow-yolov9"
-  wandb_entity:               "ltu-group10"
-  log_images_every_n_epochs:  10
-  log_grad_norm:              true
-  watch_model:                false
-
-# ── domain-shift sub-experiment ───────────────────────────────────────────────
-# Owned by Achyuth. Set enabled: true when running the sub-experiment notebook.
-# Sequence lists are defined above under paths.domain_shift.
+  wandb_project: nvd-snow-yolov9
+  wandb_entity: ADL-Group-10
+  log_images_every_n_epochs: 10
+  log_grad_norm: true
+  watch_model: false
 domain_shift:
   enabled: false
+  light_snow:
+    desaturation:
+      enabled: true
+      saturation_limit:
+      - -0.3
+      - -0.1
+      p: 0.3
+    blur:
+      enabled: true
+      blur_limit:
+      - 3
+      - 5
+      p: 0.2
+    brightness_jitter:
+      enabled: true
+      brightness_limit:
+      - -0.08
+      - 0.03
+      p: 0.3
+    snow_overlay:
+      enabled: true
+      snow_point_lower: 0.05
+      snow_point_upper: 0.15
+      p: 0.2
+  heavy_snow:
+    desaturation:
+      enabled: true
+      saturation_limit:
+      - -0.8
+      - -0.4
+      p: 0.8
+    blur:
+      enabled: true
+      blur_limit:
+      - 5
+      - 11
+      p: 0.7
+    brightness_jitter:
+      enabled: true
+      brightness_limit:
+      - -0.25
+      - -0.05
+      p: 0.8
+    snow_overlay:
+      enabled: true
+      snow_point_lower: 0.2
+      snow_point_upper: 0.5
+      p: 0.6

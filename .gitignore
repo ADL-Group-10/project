@@ -40,3 +40,8 @@ Thumbs.db
 # Claude
 CLAUDE.md
 DATA_PIPELINE_DESIGN_LOG.md
+*.pt
+notebooks/wandb/
+wandb/
+notebooks/runs/
+runs/

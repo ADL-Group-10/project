@@ -111,68 +111,15 @@ def build_objective(base_cfg: DictConfig):
 # ── Training seam ──────────────────────────────────────────────────────────
 
 def train_one_trial(cfg: DictConfig, trial: optuna.Trial) -> float:
-    """
-    Train ONE short v1 run and return the final validation mAP50.
-
-    CURRENT: skeleton stub — returns a plausible value so the study and
-             pruner run end-to-end without Dharmini's trainer.
-
-    REPLACE WITH (see module docstring for full details):
-        from src.model.baseline_yolov9.trainer import YOLOv9Trainer
-        trainer = YOLOv9Trainer(cfg)
-        best = 0.0
-        for epoch in range(cfg.training.epochs):
-            trainer.train_one_epoch()
-            if epoch % cfg.training.val_every_n_epochs == 0:
-                map50 = trainer.validate()["mAP50"]
-                best  = max(best, map50)
-                trial.report(map50, step=epoch)
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
-        return best
-    """
-    logger = get_logger("tuning.stub", cfg)
-    logger.warning(
-        "train_one_trial() is a STUB — replace with real YOLOv9 training "
-        "when the trainer lands (see module docstring)."
-    )
-
-    # Honour cfg.training.epochs directly — apply_hp_to_config has already
-    # capped it at cfg.tuning.trial_epochs if that key is present.
-    tuning_epochs = max(1, int(cfg.training.epochs))
-
-    # Deterministic-but-HP-sensitive dummy curve so the pruner has something
-    # to work with. The curve peaks at a "sweet spot" (lr≈1e-3, bs=16,
-    # box_weight≈7.5, focal_gamma≈1.5) — note the penalty is symmetric, not
-    # monotonic in lr/bs/etc., just a plausible hill for the skeleton.
-    lr            = float(cfg.training.lr)
-    bs            = int(cfg.training.batch_size)
-    box_weight    = float(cfg.loss.box_weight)
-    focal_gamma   = float(cfg.loss.focal_gamma)
-
-    score_base = 0.70
-    score_base -= abs(math.log10(lr) - math.log10(1e-3)) * 0.05
-    score_base -= abs(bs - 16) * 0.002
-    score_base -= abs(box_weight - 7.5) * 0.01
-    score_base -= abs(focal_gamma - 1.5) * 0.02
-    score_base = max(0.05, min(0.92, score_base))
-
-    rng  = random.Random(cfg.project.seed + trial.number)
-    best = 0.0
-
-    for epoch in range(tuning_epochs):
-        # ramp up over epochs with a bit of noise
-        progress = (epoch + 1) / tuning_epochs
-        noise    = rng.uniform(-0.02, 0.02)
-        map50    = max(0.0, score_base * progress + noise)
-
-        best = max(best, map50)
-        trial.report(map50, step=epoch)
-
-        if trial.should_prune():
-            raise optuna.TrialPruned()
-
-        # small sleep so the W&B callback has time to log each step in demos
-        time.sleep(0.01)
-
-    return best
+    from src.model.trainer import YOLOv9Trainer
+    trainer = YOLOv9Trainer(cfg)
+    trainer.dataset_yaml = "/project/outputs/yolo/dataset.yaml"
+    map50 = trainer.train_one_trial({
+        "lr":            cfg.training.lr,
+        "batch_size":    cfg.training.batch_size,
+        "warmup_epochs": cfg.training.warmup_epochs,
+        "box_weight":    cfg.loss.box_weight,
+        "trial_number":  trial.number,
+    })
+    trial.report(map50, step=cfg.training.epochs)
+    return map50  

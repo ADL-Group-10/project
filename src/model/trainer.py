@@ -1,0 +1,222 @@
+"""
+src/model/baseline_yolov9/trainer.py
+
+V1 Baseline Trainer — ultralytics based.
+
+Tuning calls:
+    trainer.train_one_trial(trial_cfg) → returns mAP50
+
+Trainer calls:
+    trainer.train()    → full training
+    trainer.validate() → returns metrics dict
+"""
+
+from pathlib import Path
+from ultralytics import YOLO
+
+from src.common_utils import load_config
+from src.data import DataPipeline
+
+
+def _setup_wandb(cfg, run_name: str) -> bool:
+    """Initialize wandb if available. Returns True if active."""
+    try:
+        import wandb
+        wandb.init(
+            project = cfg.logging.wandb_project,
+            entity  = cfg.logging.wandb_entity,
+            name    = run_name,
+            config  = {
+                "lr":           cfg.training.lr,
+                "batch_size":   cfg.training.batch_size,
+                "epochs":       cfg.training.epochs,
+                "optimizer":    cfg.training.optimizer,
+                "box_weight":   cfg.loss.box_weight,
+                "cls_weight":   cfg.loss.cls_weight,
+                "dfl_weight":   cfg.loss.dfl_weight,
+                "focal_gamma":  cfg.loss.focal_gamma,
+                "img_size":     cfg.model.img_size,
+                "seed":         cfg.project.seed,
+                "experiment":   run_name,
+                "augment":      "base",
+            }
+        )
+        print("[trainer] wandb initialized")
+        return True
+    except Exception as e:
+        print(f"[trainer] wandb not available — skipping ({e})")
+        return False
+
+
+class YOLOv9Trainer:
+
+    def __init__(self, cfg) -> None:
+        self.cfg    = cfg
+        self.device = self._get_device()
+
+        # Load YOLOv9 pretrained weights
+        self.model = YOLO("yolov9c.pt")
+        print(f"[trainer] YOLOv9 loaded on {self.device}")
+
+        # We will use the standard YOLO structure to avoid path mismatches
+        self.base_project = "/project/outputs/results"
+        
+        # Data
+        if Path("/project/outputs/yolo/dataset.yaml").exists():
+            self.dataset_yaml = "/project/outputs/yolo/dataset.yaml"
+            print("[trainer] Using existing dataset.")
+        else:
+            pipeline = DataPipeline("config.yaml")
+            dataset_path, _ = pipeline.run(augment="base")
+            self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
+
+        # Output dir
+        self.out_dir = Path(self.base_project)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Public API ────────────────────────────────────────────────
+
+    def train(self, name="v1") -> None:
+        """Full training run — call from notebook."""
+        t   = self.cfg.training
+        lo  = self.cfg.loss
+
+        # 1. Start WandB with the correct name
+        _setup_wandb(self.cfg, run_name=name)
+
+        self.results = self.model.train(
+            # --- MODEL INPUTS ---
+            weight_decay  = t.weight_decay,                   
+            patience      = t.early_stopping_patience,            
+            seed          = self.cfg.project.seed,
+            
+            # --- DATA & HARDWARE ---
+            data          = self.dataset_yaml,
+            imgsz         = self.cfg.model.img_size,
+            device        = self.device,
+            workers       = t.num_workers,
+
+             # --- TUNED PARAMETERS ---
+            epochs        = t.epochs,
+            batch         = t.batch_size,
+            lr0           = t.lr,
+            warmup_epochs = t.warmup_epochs,
+            box           = lo.box_weight,
+
+             # --- FIXED TRAINING LOGIC ---
+            optimizer     = t.optimizer.upper(),
+            cls           = lo.cls_weight,
+            dfl           = lo.dfl_weight,    
+                        
+            # Output
+            project       = self.base_project,
+            name          = name,
+            verbose       = True,
+            exist_ok      = True,
+        )
+        print(f"[trainer] Done. Best mode: {self.base_project}/{name}/weights/best.pt")
+
+    def validate(self) -> dict:
+        """Run validation, return metrics."""
+        metrics = self.model.val(
+            data    = self.dataset_yaml,
+            imgsz   = self.cfg.model.img_size,
+            device  = self.device,
+            verbose = False,
+        )
+        return {
+            "mAP50":     metrics.box.map50,
+            "mAP50_95":  metrics.box.map,
+            "precision": metrics.box.mp,
+            "recall":    metrics.box.mr,
+        }
+
+    def train_one_trial(self, trial_cfg: dict) -> float:
+        """
+        For Optuna tuning.
+        trial_cfg keys: lr, batch_size, warmup_epochs, box_weight,
+                        focal_gamma, trial_number
+        Returns mAP50.
+        """
+        self.model = YOLO("yolov9c.pt")   # fresh model per trial
+        self.model.train(
+                    # --- DATA & HARDWARE ---
+                    data          = self.dataset_yaml,            # Path to dataset.yaml generated by DataPipeline
+                    imgsz         = self.cfg.model.img_size,      # Fixed at 640 for consistency
+                    device        = self.device,                  # GPU (0) or CPU
+                    workers       = self.cfg.training.num_workers,
+                    
+                    # --- TUNED PARAMETERS (Optuna-controlled) ---
+                    epochs        = self.cfg.tuning.trial_epochs, # 15 epochs per trial 
+                    batch         = trial_cfg.get("batch_size", 8),
+                    lr0           = trial_cfg.get("lr", 0.001),
+                    warmup_epochs = trial_cfg.get("warmup_epochs", 3),
+                    box           = trial_cfg.get("box_weight", 7.5),
+                    
+                    
+                    # --- FIXED TRAINING LOGIC ---
+                    # Forced to 'ADAM' or 'SGD' to prevent YOLO from overriding tuned lr0
+                    optimizer     = self.cfg.training.optimizer.upper(), 
+                    cls           = self.cfg.loss.cls_weight,     # Fixed classification weight
+                    dfl           = self.cfg.loss.dfl_weight,     # Fixed distribution focal loss weight
+                    
+                    # --- LOGGING & OUTPUT ---
+                    project       = "outputs/optuna_trials",      # Group all trials in one folder
+                    name          = f"trial_{trial_cfg.get('trial_number', 0)}",
+                    verbose       = False,                        # Minimizes notebook log clutter
+                    exist_ok      = True,                         # Overwrites existing trial folder if restarted
+                )
+        metrics = self.validate()
+        return metrics["mAP50"]
+
+    # ── Private ───────────────────────────────────────────────────
+
+    def _get_device(self) -> str:
+        import torch
+        requested = self.cfg.project.device
+        if "cuda" in requested and torch.cuda.is_available():
+            return "0"
+        return "cpu"
+
+
+class YOLOv9TrainerSA(YOLOv9Trainer):
+    """V2 — snow augmentation. Only difference from V1: augment='snow'."""
+
+    def __init__(self, cfg) -> None:
+        super().__init__(cfg)
+
+        # Override with snow augmentation
+        pipeline          = DataPipeline("config.yaml")
+        dataset_path, _   = pipeline.run(augment="snow")
+        self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
+        self.out_dir = Path(self.base_project) / "v2"
+        print("[trainer_sa] V2 Snow-Augmented Trainer ready.")
+
+    def train(self) -> None:
+        # Calls the parent logic
+        super().train(name="v2")                
+        print(f"[trainer_sa] Done. Best model: {self.out_dir}/weights/best.pt")
+
+
+class YOLOv9TrainerDS(YOLOv9Trainer):
+    """V3 — Domain Shift Experiment. 
+    Uses Light Snow for training and Heavy Snow for testing.
+    """
+    def __init__(self, cfg) -> None:
+        super().__init__(cfg)
+        
+        # 1. Initialize the pipeline with the domain_shift flag
+        pipeline = DataPipeline("config.yaml")
+        
+        # 2. This creates different intensity levels for Train vs Test
+        dataset_path, _ = pipeline.run(augment="snow", domain_shift=True)
+        
+        # 3. Point to the new dataset and set a clean output directory
+        self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
+        self.out_dir = Path(self.base_project) / "v3_ds"
+        print("[trainer_ds] V3 Domain-Shift Trainer Initialized.")
+
+    def train(self) -> None:
+        # Pass name="v3_ds" to get the clean outputs/checkpoints/v3_ds/ path
+        super().train(name="v3_ds")
+        print(f"[trainer_ds] Done. Best model: {self.out_dir}/weights/best.pt")

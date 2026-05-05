@@ -86,6 +86,11 @@ def write_best_to_config(
         diff[key_path] = (old_val, new_val)
         OmegaConf.update(cfg, key_path, new_val, merge=False)
 
+    # After writing global values, sync variant lr blocks
+    for variant in ("v1", "v2"):
+        path = f"variants.{variant}.training.lr"
+        OmegaConf.update(cfg, path, best_params["lr"], merge=False)
+    
     if dry_run:
         logger.info("[dry-run] would change:")
         for k, (old, new) in diff.items():
