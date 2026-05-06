@@ -132,7 +132,7 @@ tuning:
   metric: val_map50
   pruner: hyperband
   sampler: tpe
-  study_name: nvd-yolov9-hp
+  study_name: nvd-yolov9-hp-v2
   search_space:
     lr:
     - 0.0001
@@ -150,10 +150,14 @@ tuning:
     warmup_epochs:
     - 1
     - 5
+    lrf:
+    - 0.001
+    - 0.1
+    
 logging:
-  wandb_project: nvd-snow-yolov9
+  wandb_project: nvd-snow-yolov9-optuna
   wandb_entity: ADL-Group-10
-  log_images_every_n_epochs: 10
+  log_images_every_n_epochs: 5
   log_grad_norm: true
   watch_model: false
 domain_shift:

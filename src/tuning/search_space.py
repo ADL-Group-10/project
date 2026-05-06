@@ -63,6 +63,11 @@ def suggest_hyperparameters(trial: optuna.Trial, cfg: DictConfig) -> dict[str, A
     wu_low, wu_high = space.warmup_epochs
     hp["warmup_epochs"] = trial.suggest_int("warmup_epochs", int(wu_low), int(wu_high))
 
+    # LR final value — controls the LR drop
+    if hasattr(space, "lrf"):
+        lrf_low, lrf_high = space.lrf
+    hp["lrf"] = trial.suggest_float("lrf", float(lrf_low), float(lrf_high))
+    
     return hp
 
 
@@ -89,6 +94,8 @@ def apply_hp_to_config(cfg: DictConfig, hp: dict[str, Any]) -> DictConfig:
     cfg.training.warmup_epochs  = hp["warmup_epochs"]
     cfg.loss.box_weight         = hp["box_weight"]
     cfg.loss.focal_gamma        = hp["focal_gamma"]
+    if "lrf" in hp:
+        cfg.training.lrf = hp["lrf"]
 
     # per-trial epoch budget — keeps tuning trials short so the 2h timeout
     # isn't blown after a handful of trials. Only applied when the key exists

@@ -30,7 +30,8 @@ def _configure_wandb(cfg) -> None:
     ul_settings.update({"wandb": True})
     os.environ["WANDB_PROJECT"] = str(cfg.logging.wandb_project)
     os.environ["WANDB_ENTITY"]  = str(cfg.logging.wandb_entity)
-    print(f"[trainer] WandB → project={cfg.logging.wandb_project}, entity={cfg.logging.wandb_entity}")
+    os.environ["WANDB_DIR"]     = str(cfg.paths.wandb_dir) 
+    print(f"[trainer] WandB : project={cfg.logging.wandb_project}, entity={cfg.logging.wandb_entity}")
 
 
 class YOLOv9Trainer:

@@ -192,8 +192,17 @@ def _build_callbacks(cfg: DictConfig) -> list:
         "project": str(cfg.logging.wandb_project),
         "group":   f"optuna-{cfg.tuning.study_name}",
         "dir":     str(cfg.paths.wandb_dir),
-        "config":  {"sampler": str(cfg.tuning.sampler),
-                    "pruner":  str(cfg.tuning.pruner)},
+        "config":  {
+            "sampler":       str(cfg.tuning.sampler),
+            "pruner":        str(cfg.tuning.pruner),
+            "n_trials":      cfg.tuning.n_trials,
+            "trial_epochs":  cfg.tuning.trial_epochs,
+            "trial_img_size":cfg.tuning.trial_img_size,
+            "lr_range":      list(cfg.tuning.search_space.lr),
+            "lrf_range":     list(cfg.tuning.search_space.lrf),
+            "box_range":     list(cfg.tuning.search_space.box_weight),
+            "batch_options": list(cfg.tuning.search_space.batch_size),
+    },
     }
     entity = getattr(cfg.logging, "wandb_entity", None)
     if entity:
