@@ -35,16 +35,18 @@ class Evaluator:
         """Evaluate on test split."""
         metrics = self.model.val(
             data    = self.dataset_yaml,
-            split   = "test", # Crucial for Domain Shift: tests on 'Heavy Snow' for V3
+            split   = "test",
             imgsz   = self.cfg.model.img_size,
             device  = "0" if torch.cuda.is_available() else "cpu",
             verbose = True,
+            plots   = True,   # ← ADD THIS — generates confusion matrix, PR curve, F1 curve
         )
         
         # Metric extraction
         mp, mr = metrics.box.mp, metrics.box.mr
         result = {
             "mAP50":      metrics.box.map50,
+            "mAP75":      metrics.box.map75,
             "mAP50_95":   metrics.box.map,
             "precision":  mp,
             "recall":     mr,
@@ -52,26 +54,6 @@ class Evaluator:
             "inference_ms": self._measure_speed(),
         }
         return result
-
-    @staticmethod
-    def compare(variant_a: str, variant_b: str) -> None:
-        """Compare any two variants side by side."""
-        ea = Evaluator(variant_a)
-        eb = Evaluator(variant_b)
-        ma = ea.run()
-        mb = eb.run()
-
-        print(f"\n{'='*60}")
-        print(f"  {'Metric':<20} {variant_a.upper():>12} {variant_b.upper():>12} {'Δ':>10}")
-        print(f"{'='*60}")
-        for key in ["mAP50", "mAP50_95", "precision", "recall", "f1", "inference_ms"]:
-            a, b  = ma.get(key, 0.0), mb.get(key, 0.0)
-            diff  = b - a
-            sign  = "+" if diff >= 0 else ""
-            print(f"  {key:<20} {a:>12.4f} {b:>12.4f} {sign+f'{diff:.4f}':>10}")
-        print(f"{'='*60}")
-        winner = variant_b if mb["mAP50"] > ma["mAP50"] else variant_a
-        print(f"  Best mAP50: {winner.upper()}\n")
 
     def _measure_speed(self) -> float:
         device  = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -101,7 +83,7 @@ class Evaluator:
         print(f"  {'Metric':<20} {'V1 BASE':>12} {'V2 AUG':>12} {'V3 DS':>12} {'V2 vs V3 Δ':>12}")
         print(f"{'='*85}")
         
-        for key in ["mAP50", "mAP50_95", "precision", "recall", "f1", "inference_ms"]:
+        for key in ["mAP50", "mAP75", "mAP50_95", "precision", "recall", "f1", "inference_ms"]:
             v1, v2, v3 = m1[key], m2[key], m3[key]
             # Calculate the Domain Shift impact (Gap between Augmentation and Shift)
             diff = v3 - v2

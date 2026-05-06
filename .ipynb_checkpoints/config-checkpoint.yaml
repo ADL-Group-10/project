@@ -4,26 +4,7 @@
 #   cfg = load_config(variant="v2")   # runtime override
 # =============================================================================
 
-project:
-  name: nvd-snow-yolov9
-  group: group-10
-  seed: 42
-  device: cuda:0
-  log_level: INFO
-variants:
-  active: v1
-  v1:
-    experiment: v1_baseline
-    use_snow_aug: false
-    training:
-      epochs: 100
-      lr: 0.00019010245319870352
-  v2:
-    experiment: v2_snow_aug
-    use_snow_aug: true
-    training:
-      epochs: 100
-      lr: 0.00019010245319870352
+
 paths:
   nvd_root: /project/src/data/NVD
   yolo_output: /project/outputs/yolo
@@ -46,6 +27,30 @@ paths:
     - 2022-12-02 Asjo 01_stabilized
     heavy_snow:
     - 2022-12-23 Bjenberg 02_stabilized
+
+project:
+  name: nvd-snow-yolov9
+  group: group-10
+  seed: 42
+  device: cuda:0
+  log_level: INFO
+  
+variants:
+  active: v1
+  v1:
+    experiment: v1_baseline
+    use_snow_aug: false    
+      
+  v2:
+    experiment: v2_snow_aug
+    use_snow_aug: true
+
+  v3:
+    experiment: v3_ds
+    use_snow_aug: true
+    domain_shift:
+      enabled: true  
+
 model:
   architecture: yolov9
   weights: yolov9-c.pt
@@ -53,16 +58,19 @@ model:
   num_classes: 1
   img_size: 640
   freeze_backbone: false
+
 training:
   epochs: 100
   batch_size: 16
   num_workers: 4
   optimizer: adam
-  lr: 0.00019010245319870352
+  lr: 0.004
+  lrf: 0.01
   lr_scheduler: cosine
+  dropout: 0.1
   warmup_epochs: 3
   weight_decay: 0.0005
-  early_stopping_patience: 15
+  early_stopping_patience: 10
   save_every_n_epochs: 10
   val_every_n_epochs: 5
 loss:
@@ -114,10 +122,12 @@ evaluation:
   measure_inference_speed: true
   speed_warmup_iters: 50
   speed_eval_iters: 200
+
 tuning:
-  n_trials: 30
+  n_trials: 60
+  trial_img_size: 320
   timeout_seconds: 7200
-  trial_epochs: 15
+  trial_epochs: 25
   direction: maximize
   metric: val_map50
   pruner: hyperband
