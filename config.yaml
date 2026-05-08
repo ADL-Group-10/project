@@ -6,13 +6,13 @@
 
 
 paths:
-  nvd_root: /project/src/data/NVD
-  yolo_output: /project/outputs/yolo
-  checkpoints_dir: /project/outputs/checkpoints
-  results_dir: /project/outputs/results
-  optuna_db: /project/outputs/optuna/study.db
-  wandb_dir: /project/outputs/wandb
-  log_dir: /project/outputs/logs
+  nvd_root: src/data/NVD
+  yolo_output: outputs/yolo
+  checkpoints_dir: outputs/checkpoints
+  results_dir: outputs/results
+  optuna_db: outputs/optuna/study.db
+  wandb_dir: outputs/wandb
+  log_dir: outputs/logs
   splits:
     train:
     - 2022-12-04 Bjenberg 02
@@ -109,9 +109,27 @@ augmentation:
       p: 0.7
     snow_overlay:
       enabled: true
-      snow_point_lower: 0.1
-      snow_point_upper: 0.3
+      snow_point_lower: 0.25
+      snow_point_upper: 0.55
+      p: 0.7
+    perspective:
+      enabled: true
+      scale:
+      - 0.05
+      - 0.10
       p: 0.4
+    motion_blur:
+      enabled: true
+      blur_limit:
+      - 5
+      - 11
+      p: 0.4
+    invert:
+      enabled: false
+      threshold:
+      - 128
+      - 220
+      p: 0.05
 evaluation:
   iou_threshold: 0.5
   conf_threshold: 0.25
@@ -167,26 +185,44 @@ domain_shift:
     desaturation:
       enabled: true
       saturation_limit:
-      - -0.3
-      - -0.1
-      p: 0.3
+      - -0.4
+      - -0.15
+      p: 0.5
     blur:
       enabled: true
       blur_limit:
       - 3
       - 5
-      p: 0.2
+      p: 0.3
     brightness_jitter:
       enabled: true
       brightness_limit:
-      - -0.08
+      - -0.10
       - 0.03
-      p: 0.3
+      p: 0.5
     snow_overlay:
       enabled: true
-      snow_point_lower: 0.05
-      snow_point_upper: 0.15
-      p: 0.2
+      snow_point_lower: 0.20
+      snow_point_upper: 0.35
+      p: 0.6
+    perspective:
+      enabled: true
+      scale:
+      - 0.02
+      - 0.05
+      p: 0.3
+    motion_blur:
+      enabled: true
+      blur_limit:
+      - 3
+      - 5
+      p: 0.3
+    invert:
+      enabled: false
+      threshold:
+      - 180
+      - 230
+      p: 0.02
   heavy_snow:
     desaturation:
       enabled: true
@@ -208,6 +244,24 @@ domain_shift:
       p: 0.8
     snow_overlay:
       enabled: true
-      snow_point_lower: 0.2
-      snow_point_upper: 0.5
+      snow_point_lower: 0.40
+      snow_point_upper: 0.75
+      p: 0.85
+    perspective:
+      enabled: true
+      scale:
+      - 0.08
+      - 0.15
       p: 0.6
+    motion_blur:
+      enabled: true
+      blur_limit:
+      - 9
+      - 17
+      p: 0.6
+    invert:
+      enabled: false
+      threshold:
+      - 100
+      - 200
+      p: 0.10

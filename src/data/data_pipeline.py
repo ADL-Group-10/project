@@ -85,12 +85,17 @@ class DataPipeline:
         std = self.aug_config["standard"]
 
         if augment in ("base", "snow"):
+            # Config values follow YOLO convention (multiplicative gain in [0,1]).
+            # Albumentations.HueSaturationValue uses additive shifts. Scaling sat/val
+            # by 50 (not 255) keeps the perturbation in line with Albumentations'
+            # own defaults (~30); * 255 was way too aggressive and pumped pink/red
+            # tones on any frame with reddish components.
             transforms += [
                 A.HorizontalFlip(p=std["horizontal_flip_p"]),
                 A.HueSaturationValue(
                     hue_shift_limit=int(std["hsv_h"] * 180),
-                    sat_shift_limit=int(std["hsv_s"] * 255),
-                    val_shift_limit=int(std["hsv_v"] * 255),
+                    sat_shift_limit=int(std["hsv_s"] * 50),
+                    val_shift_limit=int(std["hsv_v"] * 50),
                     p=0.5,
                 ),
             ]
@@ -307,12 +312,14 @@ class DataPipeline:
 
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
     pipeline = DataPipeline()
     pipeline.summary()
 
     img_dir = pipeline.output_dir / "images" / "train"
     lbl_dir = pipeline.output_dir / "labels" / "train"
-    sample_paths = list(img_dir.glob("*.png"))[:3]
+    sample_path = list(img_dir.glob("*.png"))[0]
 
     samples_dir = pipeline.output_dir / "samples"
     samples_dir.mkdir(exist_ok=True)
@@ -320,28 +327,111 @@ if __name__ == "__main__":
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
 
-    def save_augmented(image, bboxes, class_labels, aug, path):
+    def apply_augmentation(image, bboxes, class_labels, aug):
         result = aug(image=image, bboxes=bboxes, class_labels=class_labels)
         out_img = ((result["image"] * std + mean) * 255).clip(0, 255).astype(np.uint8)
-        out_img = DataPipeline._draw_bboxes(out_img, result["bboxes"])
-        cv2.imwrite(str(path), cv2.cvtColor(out_img, cv2.COLOR_RGB2BGR))
+        return DataPipeline._draw_bboxes(out_img, result["bboxes"])
 
-    for i, sample_path in enumerate(sample_paths):
-        image = cv2.cvtColor(cv2.imread(str(sample_path)), cv2.COLOR_BGR2RGB)
-        bboxes, class_labels = DataPipeline._read_yolo_label(lbl_dir / (sample_path.stem + ".txt"))
+    def wrap_single(transform):
+        """Wrap a single transform with the Resize+Normalize tail so the
+        decode step in apply_augmentation works the same way."""
+        return A.Compose(
+            [transform,
+             A.Resize(height=pipeline.img_size, width=pipeline.img_size),
+             A.Normalize(mean=mean.tolist(), std=std.tolist())],
+            bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels"], min_visibility=0.3),
+        )
 
-        for mode in ("raw", "base", "snow"):
-            out_path = samples_dir / f"sample_{i+1}_{mode}.png"
-            if mode == "raw":
-                out_img = DataPipeline._draw_bboxes(image.copy(), bboxes)
-                cv2.imwrite(str(out_path), cv2.cvtColor(out_img, cv2.COLOR_RGB2BGR))
-            else:
-                _, aug = pipeline.run(augment=mode)
-                save_augmented(image, bboxes, class_labels, aug, out_path)
-            print(f"sample {i+1} {mode} -> {out_path}")
+    # Pull params from config so individual demos use the same values as the
+    # real pipeline. Force p=1.0 so each effect is guaranteed visible — the
+    # purpose here is to SHOW what the transform does.
+    std_cfg  = pipeline.aug_config["standard"]
+    snow_cfg = pipeline.aug_config["snow"]
 
-        _, ds_augs = pipeline.run(augment="snow", domain_shift=True)
-        for ds_mode, ds_key in [("light_snow", "train"), ("heavy_snow", "test")]:
-            out_path = samples_dir / f"sample_{i+1}_{ds_mode}.png"
-            save_augmented(image, bboxes, class_labels, ds_augs[ds_key], out_path)
-            print(f"sample {i+1} {ds_mode} -> {out_path}")
+    singles = {
+        "flip":         A.HorizontalFlip(p=1.0),
+        "hsv":          A.HueSaturationValue(
+                            hue_shift_limit=int(std_cfg["hsv_h"] * 180),
+                            sat_shift_limit=int(std_cfg["hsv_s"] * 255),
+                            val_shift_limit=int(std_cfg["hsv_v"] * 255),
+                            p=1.0),
+        "perspective":  A.Perspective(scale=tuple(snow_cfg["perspective"]["scale"]),
+                                       keep_size=True, p=1.0),
+        "desaturate":   A.HueSaturationValue(
+                            hue_shift_limit=0,
+                            sat_shift_limit=[int(snow_cfg["desaturation"]["saturation_limit"][0] * 255),
+                                             int(snow_cfg["desaturation"]["saturation_limit"][1] * 255)],
+                            val_shift_limit=0,
+                            p=1.0),
+        "blur":         A.GaussianBlur(blur_limit=tuple(snow_cfg["blur"]["blur_limit"]), p=1.0),
+        "brightness":   A.RandomBrightnessContrast(
+                            brightness_limit=tuple(snow_cfg["brightness_jitter"]["brightness_limit"]),
+                            contrast_limit=0, p=1.0),
+        "snow_overlay": A.RandomSnow(
+                            snow_point_lower=snow_cfg["snow_overlay"]["snow_point_lower"],
+                            snow_point_upper=snow_cfg["snow_overlay"]["snow_point_upper"],
+                            p=1.0),
+        "motion_blur":  A.MotionBlur(blur_limit=tuple(snow_cfg["motion_blur"]["blur_limit"]), p=1.0),
+        "invert":       A.Solarize(threshold=tuple(snow_cfg["invert"]["threshold"]), p=1.0),
+    }
+    single_pipelines = {name: wrap_single(t) for name, t in singles.items()}
+
+    _, base_aug = pipeline.run(augment="base")
+    _, snow_aug = pipeline.run(augment="snow")
+    _, ds_augs  = pipeline.run(augment="snow", domain_shift=True)
+
+    image = cv2.cvtColor(cv2.imread(str(sample_path)), cv2.COLOR_BGR2RGB)
+    bboxes, class_labels = DataPipeline._read_yolo_label(lbl_dir / (sample_path.stem + ".txt"))
+
+    short = {"perspective": "persp", "desaturation": "desat", "blur": "blur",
+             "brightness_jitter": "bright", "snow_overlay": "snow",
+             "motion_blur": "motion", "invert": "invert"}
+
+    def active_label(name, cfg_block, include_standard=False):
+        parts = ["flip", "hsv"] if include_standard else []
+        if cfg_block:
+            parts += [short[k] for k in short if cfg_block.get(k, {}).get("enabled", False)]
+        return f"{name}\n({' + '.join(parts)})" if parts else name
+
+    ds_cfg = pipeline.config.domain_shift
+
+    # Top row: variants
+    variant_cells = [
+        ("raw", DataPipeline._draw_bboxes(image.copy(), bboxes)),
+        (active_label("V1 base", None, include_standard=True),
+            apply_augmentation(image, bboxes, class_labels, base_aug)),
+        ("V2 full snow",        apply_augmentation(image, bboxes, class_labels, snow_aug)),
+        ("V3 train (light)",    apply_augmentation(image, bboxes, class_labels, ds_augs["train"])),
+        ("V3 test (heavy)",     apply_augmentation(image, bboxes, class_labels, ds_augs["test"])),
+    ]
+
+    # Lower rows: individual transforms
+    individual_cells = [(name, apply_augmentation(image, bboxes, class_labels, p))
+                        for name, p in single_pipelines.items()]
+
+    cells = variant_cells + individual_cells
+
+    n_cells = len(cells)
+    n_cols  = 5
+    n_rows  = (n_cells + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 3 * n_rows))
+    axes_flat = axes.flatten()
+
+    for ax, (label, img) in zip(axes_flat, cells):
+        ax.imshow(img)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(label, fontsize=9, fontweight="bold")
+
+    for ax in axes_flat[len(cells):]:
+        ax.axis("off")
+
+    out_path = samples_dir / "comparison.png"
+    fig.suptitle(f"Top row: variants (raw, V1, V2, V3 train, V3 test).  "
+                 f"Lower rows: each transform alone (p=1.0).\nsample: {sample_path.stem}",
+                 fontsize=12, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(str(out_path), dpi=110, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved comparison grid -> {out_path}")

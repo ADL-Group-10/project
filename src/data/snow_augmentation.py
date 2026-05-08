@@ -17,6 +17,16 @@ class SnowAugmentation:
         transforms = []
         cfg = self.config
 
+        # Geometric first — must run before color transforms so bboxes are
+        # remapped against the original pixel grid.
+        if cfg.get("perspective", {}).get("enabled", False):
+            ps = cfg["perspective"]
+            transforms.append(A.Perspective(
+                scale=tuple(ps["scale"]),
+                keep_size=True,
+                p=ps["p"],
+            ))
+
         if cfg.get("desaturation", {}).get("enabled", False):
             ds = cfg["desaturation"]
             transforms.append(A.HueSaturationValue(
@@ -45,8 +55,31 @@ class SnowAugmentation:
         if cfg.get("snow_overlay", {}).get("enabled", False):
             so = cfg["snow_overlay"]
             transforms.append(A.RandomSnow(
-                snow_point_range=(so["snow_point_lower"], so["snow_point_upper"]),
+                snow_point_lower=so["snow_point_lower"],
+                snow_point_upper=so["snow_point_upper"],
                 p=so["p"],
+            ))
+
+        # Runs AFTER snow_overlay so the synthetic flakes themselves streak —
+        # simulates long-exposure capture during active snowfall.
+        if cfg.get("motion_blur", {}).get("enabled", False):
+            mb = cfg["motion_blur"]
+            transforms.append(A.MotionBlur(
+                blur_limit=tuple(mb["blur_limit"]),
+                p=mb["p"],
+            ))
+
+        # Threshold-based partial inversion via A.Solarize: only pixels with
+        # value > threshold get flipped to (255 - value). Lower threshold ->
+        # more of the image inverts. High threshold (~200+) flips only the
+        # brightest pixels (snow), leaving mid-tone structures (cars) intact.
+        # threshold may be (low, high); Albumentations samples uniformly per
+        # image. Off by default — see README for guidance.
+        if cfg.get("invert", {}).get("enabled", False):
+            inv = cfg["invert"]
+            transforms.append(A.Solarize(
+                threshold=tuple(inv["threshold"]),
+                p=inv["p"],
             ))
 
         return transforms
