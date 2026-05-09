@@ -1,40 +1,9 @@
 """
-src/tuning/study.py
-
-Creates an Optuna study, wires in TPE + Hyperband + WandB, and runs it.
-
-Contract with config.yaml → tuning:
-    n_trials        → study.optimize(n_trials=...)
-    timeout_seconds → study.optimize(timeout=...)
-    direction       → create_study(direction=...)
-    metric          → used as metric_name on the WandB callback
-    pruner          → "hyperband" | "median" | "none"
-    sampler         → "tpe" | "random"
-    study_name      → create_study(study_name=...)
-    trial_epochs    → Hyperband max_resource AND per-trial epoch cap
-                      (honoured inside apply_hp_to_config; falls back to
-                      cfg.training.epochs if not set)
-
-Storage:
-    Uses SQLite at cfg.paths.optuna_db so the study resumes cleanly between
-    sessions. Call run_study() again with the same study_name and it picks
-    up where it left off.
-
-    NOTE: load_if_exists=True means if you edit cfg.tuning.search_space and
-    rerun with the same study_name, the old param distributions are still
-    stored. Either change study_name or delete the sqlite file when you
-    materially change the search space.
-
-WandB:
-    If cfg.logging.wandb_project is set, each trial is logged as its own
-    W&B run (as_multirun=True) so parallel-coordinates plots work out of
-    the box. If the optuna W&B integration isn't installed, or if
-    cfg.logging.wandb_project is missing/None, the study still runs — just
-    without per-trial W&B runs.
+Build the Optuna study (sampler + pruner + SQLite storage + optional W&B
+callback) and run it. Resumes prior runs via study_name.
 """
 
 from __future__ import annotations
-from pathlib import Path
 from typing import Optional
 import warnings
 
@@ -42,7 +11,7 @@ import optuna
 from optuna.samplers import TPESampler, RandomSampler
 from optuna.pruners  import HyperbandPruner, MedianPruner, NopPruner
 from optuna.exceptions import ExperimentalWarning
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from src.common_utils import load_config, get_paths, get_logger
 
@@ -50,7 +19,6 @@ from .objective import build_objective
 
 warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
-# ── Sampler / pruner factories ─────────────────────────────────────────────
 
 def _build_sampler(cfg: DictConfig) -> optuna.samplers.BaseSampler:
     name = str(cfg.tuning.sampler).lower()
@@ -63,23 +31,13 @@ def _build_sampler(cfg: DictConfig) -> optuna.samplers.BaseSampler:
 
 
 def _build_pruner(cfg: DictConfig) -> optuna.pruners.BasePruner:
-    """
-    Build the configured pruner.
-
-    Hyperband's `max_resource` should match the number of steps a trial
-    actually reports — which is cfg.tuning.trial_epochs when set (so the
-    pruner brackets line up with the stub's and the real trainer's report
-    cadence), falling back to cfg.training.epochs otherwise.
-    """
+    """Hyperband max_resource matches the per-trial reporting cadence."""
     name = str(cfg.tuning.pruner).lower()
     if name == "hyperband":
-        budget = getattr(cfg.tuning, "trial_epochs", None)
-        if budget is None:
-            budget = cfg.training.epochs
-        max_resource = max(4, int(budget))
+        budget = getattr(cfg.tuning, "trial_epochs", None) or cfg.training.epochs
         return HyperbandPruner(
             min_resource=1,
-            max_resource=max_resource,
+            max_resource=max(4, int(budget)),
             reduction_factor=3,
         )
     if name == "median":
@@ -89,19 +47,12 @@ def _build_pruner(cfg: DictConfig) -> optuna.pruners.BasePruner:
     raise ValueError(f"Unknown pruner '{name}' — use 'hyperband' | 'median' | 'none'")
 
 
-# ── Public API ─────────────────────────────────────────────────────────────
-
 def create_study(cfg: DictConfig) -> optuna.Study:
-    """
-    Create (or resume) the Optuna study declared in cfg.tuning.
-
-    Uses SQLite storage so repeated calls with the same study_name resume.
-    The storage directory is already created by get_paths(cfg).
-    """
+    """Create or resume the Optuna study declared in cfg.tuning."""
     paths = get_paths(cfg)
     storage_url = f"sqlite:///{paths.optuna_db.as_posix()}"
 
-    study = optuna.create_study(
+    return optuna.create_study(
         study_name     = str(cfg.tuning.study_name),
         direction      = str(cfg.tuning.direction),
         storage        = storage_url,
@@ -109,7 +60,6 @@ def create_study(cfg: DictConfig) -> optuna.Study:
         pruner         = _build_pruner(cfg),
         load_if_exists = True,
     )
-    return study
 
 
 def run_study(
@@ -117,24 +67,9 @@ def run_study(
     n_trials: Optional[int] = None,
     timeout:  Optional[int] = None,
 ) -> optuna.Study:
-    """
-    One-shot: load config → create study → optimize → return study.
-
-    Args:
-        cfg:      Merged config. If None, load_config() is called.
-        n_trials: Override cfg.tuning.n_trials (handy for quick smoke runs).
-        timeout:  Override cfg.tuning.timeout_seconds.
-
-    Returns:
-        The completed optuna.Study (trials available via study.trials).
-
-    Example:
-        from src.tuning import run_study, write_best_to_config
-        study = run_study(n_trials=5)   # smoke run
-        write_best_to_config(study)
-    """
+    """Load config → create study → optimize → return study."""
     if cfg is None:
-        cfg = load_config(variant="v1")   # tuning always runs on v1
+        cfg = load_config(variant="v1")
 
     logger = get_logger("tuning.study", cfg)
     study  = create_study(cfg)
@@ -142,31 +77,27 @@ def run_study(
     n_trials = int(n_trials if n_trials is not None else cfg.tuning.n_trials)
     timeout  = int(timeout  if timeout  is not None else cfg.tuning.timeout_seconds)
 
-    callbacks = _build_callbacks(cfg)
-
     logger.info(
         f"Starting study '{cfg.tuning.study_name}' — "
         f"{n_trials} trials, {timeout}s cap, sampler={cfg.tuning.sampler}, "
         f"pruner={cfg.tuning.pruner}"
     )
 
-    objective = build_objective(cfg)
     study.optimize(
-        objective,
+        build_objective(cfg),
         n_trials       = n_trials,
         timeout        = timeout,
-        callbacks      = callbacks,
+        callbacks      = _build_callbacks(cfg),
         gc_after_trial = True,
     )
 
     _log_summary(study, logger)
+    _log_study_summary_to_wandb(study, cfg, logger)
     return study
 
 
-# ── WandB callback ─────────────────────────────────────────────────────────
-
 def _build_callbacks(cfg: DictConfig) -> list:
-    """Build the callbacks list. WandB is optional — degrades cleanly."""
+    """W&B callback — optional, degrades cleanly if unavailable."""
     callbacks: list = []
     logger = get_logger("tuning.wandb", cfg)
 
@@ -178,7 +109,6 @@ def _build_callbacks(cfg: DictConfig) -> list:
         from optuna.integration.wandb import WeightsAndBiasesCallback
     except ImportError:
         try:
-            # Newer optuna-integration package split-out
             from optuna_integration.wandb import WeightsAndBiasesCallback
         except ImportError:
             logger.warning(
@@ -186,34 +116,21 @@ def _build_callbacks(cfg: DictConfig) -> list:
             )
             return callbacks
 
-    # Entity is optional — W&B will use the default entity if not specified,
-    # which is useful for contributors who aren't part of ltu-group10 yet.
     wandb_kwargs: dict = {
         "project": str(cfg.logging.wandb_project),
         "group":   f"optuna-{cfg.tuning.study_name}",
         "dir":     str(cfg.paths.wandb_dir),
-        "config":  {
-            "sampler":       str(cfg.tuning.sampler),
-            "pruner":        str(cfg.tuning.pruner),
-            "n_trials":      cfg.tuning.n_trials,
-            "trial_epochs":  cfg.tuning.trial_epochs,
-            "trial_img_size":cfg.tuning.trial_img_size,
-            "lr_range":      list(cfg.tuning.search_space.lr),
-            "lrf_range":     list(cfg.tuning.search_space.lrf),
-            "box_range":     list(cfg.tuning.search_space.box_weight),
-            "batch_options": list(cfg.tuning.search_space.batch_size),
-    },
+        "config":  OmegaConf.to_container(cfg.tuning, resolve=True),
     }
     entity = getattr(cfg.logging, "wandb_entity", None)
     if entity:
         wandb_kwargs["entity"] = str(entity)
 
-    wandb_cb = WeightsAndBiasesCallback(
+    callbacks.append(WeightsAndBiasesCallback(
         metric_name  = str(cfg.tuning.metric),
         wandb_kwargs = wandb_kwargs,
-        as_multirun  = True,   # one W&B run per trial
-    )
-    callbacks.append(wandb_cb)
+        as_multirun  = True,
+    ))
     logger.info(
         f"W&B callback active → project={wandb_kwargs['project']}"
         + (f", entity={entity}" if entity else " (default entity)")
@@ -221,16 +138,64 @@ def _build_callbacks(cfg: DictConfig) -> list:
     return callbacks
 
 
-# ── Summary ────────────────────────────────────────────────────────────────
+def _log_study_summary_to_wandb(study: optuna.Study, cfg: DictConfig, logger) -> None:
+    """Log Optuna visualization plots and best-trial info to a single W&B run."""
+    if not getattr(cfg.logging, "wandb_project", None):
+        return
+    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    if not completed:
+        return
+
+    try:
+        import wandb
+        import matplotlib.pyplot as plt
+        from optuna.visualization import matplotlib as ovm
+    except ImportError:
+        logger.info("wandb or optuna matplotlib backend missing — skipping study summary.")
+        return
+
+    run = wandb.init(
+        project  = str(cfg.logging.wandb_project),
+        entity   = getattr(cfg.logging, "wandb_entity", None),
+        group    = f"optuna-{cfg.tuning.study_name}",
+        name     = f"{cfg.tuning.study_name}-summary",
+        job_type = "study-summary",
+        dir      = str(cfg.paths.wandb_dir),
+        reinit   = True,
+    )
+
+    plots = [
+        ("optimization_history", ovm.plot_optimization_history),
+        ("param_importances",    ovm.plot_param_importances),
+        ("parallel_coordinate",  ovm.plot_parallel_coordinate),
+        ("slice",                ovm.plot_slice),
+    ]
+    for name, fn in plots:
+        try:
+            obj = fn(study)
+            fig = obj.figure if hasattr(obj, "figure") else obj.flatten()[0].figure
+            wandb.log({f"optuna/{name}": wandb.Image(fig)})
+            plt.close(fig)
+        except Exception as e:
+            logger.warning(f"failed to log {name}: {e}")
+
+    wandb.log({
+        "study/best_value":  float(study.best_value),
+        "study/best_trial":  int(study.best_trial.number),
+        "study/n_complete":  len(completed),
+        "study/n_total":     len(study.trials),
+    })
+    wandb.config.update({"best_params": dict(study.best_trial.params)}, allow_val_change=True)
+    wandb.finish()
+
 
 def _log_summary(study: optuna.Study, logger) -> None:
     completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
     pruned    = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
     failed    = [t for t in study.trials if t.state == optuna.trial.TrialState.FAIL]
-    total     = len(study.trials)
 
     logger.info(
-        f"Study done — {total} total in storage "
+        f"Study done — {len(study.trials)} total in storage "
         f"({len(completed)} complete, {len(pruned)} pruned, {len(failed)} failed)"
     )
 

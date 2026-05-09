@@ -38,23 +38,25 @@ project:
 variants:
   active: v1
   v1:
-    experiment: v1_baseline
-    use_snow_aug: false    
-      
+    experiment: v1
+    augmentation:
+      use_snow_aug: false
   v2:
-    experiment: v2_snow_aug
-    use_snow_aug: true
-
-  v3:
+    experiment: v2
+    augmentation:
+      use_snow_aug: true
+  v3_ds:
     experiment: v3_ds
-    use_snow_aug: true
+    augmentation:
+      use_snow_aug: true
     domain_shift:
-      enabled: true  
+      enabled: true
 
 model:
-  architecture: yolov9
+  architecture: yolov9              # informational; weights file determines actual arch
   weights: yolov9-c.pt
-  yolov9_repo: third_party/yolov9
+  yolov9_repo: third_party/yolov9   # informational; Ultralytics auto-fetches
+  trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
   img_size: 640
   freeze_backbone: false
@@ -66,19 +68,19 @@ training:
   optimizer: adam
   lr: 0.004
   lrf: 0.01
-  lr_scheduler: cosine
+  lr_scheduler: cosine              # cosine | linear
   dropout: 0.1
   warmup_epochs: 3
   weight_decay: 0.0005
   early_stopping_patience: 10
   save_every_n_epochs: 10
-  val_every_n_epochs: 5
+  val_every_n_epochs: 1             # validate every N epochs (1 = every epoch)
 loss:
   box_weight: 8.925879806965067
   cls_weight: 0.5
   dfl_weight: 1.5
   focal_gamma: 0.8993475643167195
-  use_pgi: true
+  use_pgi: true                     # YOLOv9-architecture-internal; no Ultralytics toggle
 augmentation:
   use_snow_aug: false
   standard:
@@ -131,9 +133,9 @@ augmentation:
       - 220
       p: 0.05
 evaluation:
-  iou_threshold: 0.5
-  conf_threshold: 0.25
-  iou_range:
+  iou_threshold: 0.6
+  conf_threshold: 0.001
+  iou_range:                        # informational; Ultralytics computes mAP[0.5:0.95:0.05] by default
   - 0.5
   - 0.95
   - 0.05
@@ -142,6 +144,13 @@ evaluation:
   speed_eval_iters: 200
 
 tuning:
+  targets:
+    lr: training.lr
+    lrf: training.lrf
+    batch_size: training.batch_size
+    warmup_epochs: training.warmup_epochs
+    box_weight: loss.box_weight
+    focal_gamma: loss.focal_gamma
   n_trials: 60
   trial_img_size: 320
   timeout_seconds: 7200
@@ -150,7 +159,7 @@ tuning:
   metric: val_map50
   pruner: hyperband
   sampler: tpe
-  study_name: nvd-yolov9-hp-v2
+  study_name: nvd-yolov9-hp-v1
   search_space:
     lr:
     - 0.0001
@@ -165,7 +174,6 @@ tuning:
     focal_gamma:
     - 0.5
     - 2.5
-    #delete warm/up epochs
     warmup_epochs: 
     - 1
     - 5
@@ -176,9 +184,9 @@ tuning:
 logging:
   wandb_project: nvd-snow-yolov9-optuna
   wandb_entity: ADL-Group-10
-  log_images_every_n_epochs: 5
-  log_grad_norm: true
-  watch_model: false
+  log_images_every_n_epochs: 5      # no-op for Ultralytics (auto-logs val images)
+  log_grad_norm: false              # no-op for Ultralytics (would need batch callback)
+  watch_model: false                # if true, wandb.watch(model) is called
 domain_shift:
   enabled: false
   light_snow:

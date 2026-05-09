@@ -1,15 +1,12 @@
 # src/tuning — Optuna hyperparameter tuning
 
-Owned by **Sathish**. Tunes the YOLOv9 v1 baseline (no snow aug), writes the
-best trial back into `config.yaml`, then hands off to Dharmini for the
-final v1 and v2 training runs.
-
 ## Files
 
 ```
 src/tuning/
     __init__.py         # public API
-    search_space.py     # yaml → trial.suggest_*
+    protocol.py         # TrialTrainer Protocol (framework contract)
+    search_space.py     # yaml → trial.suggest_*; overlay onto cfg
     objective.py        # build_objective() + train_one_trial() seam
     study.py            # create/run study, sampler+pruner, W&B callback
     write_best.py       # patch config.yaml with best trial
@@ -20,18 +17,20 @@ src/tuning/
 
 All config flows from `config.yaml → tuning`:
 
-| yaml key                 | Used by                 |
-|--------------------------|-------------------------|
-| `n_trials`               | `study.optimize`        |
-| `timeout_seconds`        | `study.optimize`        |
-| `direction`              | `optuna.create_study`   |
-| `metric`                 | W&B callback metric_name|
-| `pruner`                 | `_build_pruner` (hyperband/median/none) |
-| `sampler`                | `_build_sampler` (tpe/random) |
-| `study_name`             | storage + W&B group     |
-| `search_space.*`         | `suggest_hyperparameters` |
-| `paths.optuna_db`        | SQLite storage          |
-| `logging.wandb_project`  | W&B callback (optional) |
+| yaml key                 | Used by                                   |
+|--------------------------|-------------------------------------------|
+| `trainer_class`          | dotted path to a `TrialTrainer`           |
+| `targets`                | HP name → cfg path it overwrites          |
+| `search_space.*`         | `suggest_hyperparameters`                 |
+| `n_trials`               | `study.optimize`                          |
+| `timeout_seconds`        | `study.optimize`                          |
+| `direction`              | `optuna.create_study`                     |
+| `metric`                 | W&B callback `metric_name`, log labels    |
+| `pruner`                 | `_build_pruner` (hyperband/median/none)   |
+| `sampler`                | `_build_sampler` (tpe/random)             |
+| `study_name`             | storage key + W&B group                   |
+| `paths.optuna_db`        | SQLite storage                            |
+| `logging.wandb_project`  | W&B callback (optional)                   |
 
 ## Usage
 
@@ -50,31 +49,24 @@ python -m src.tuning.run_tuning                    # full
 python -m src.tuning.run_tuning --dry-run          # inspect diff only
 ```
 
-## Current status — SKELETON
+## Plugging in a new framework
 
-`train_one_trial()` in `objective.py` is a **stub** that returns a plausible
-dummy mAP50 curve. It exists so the Optuna + W&B + pruning pipeline runs
-end-to-end today, before Dharmini's `trainer.py` is ready.
-
-### Swapping in the real trainer
-
-In `objective.py`, replace the body of `train_one_trial(cfg, trial)` with:
+Implement a class matching `TrialTrainer` (see `protocol.py`):
 
 ```python
-from src.models import YOLOv9Trainer   # Dharmini's module
-
-def train_one_trial(cfg, trial):
-    trainer = YOLOv9Trainer(cfg)
-    best = 0.0
-    for epoch in range(cfg.training.epochs):
-        trainer.train_one_epoch()
-        if epoch % cfg.training.val_every_n_epochs == 0:
-            map50 = trainer.validate()["mAP50"]
-            best = max(best, map50)
-            trial.report(map50, step=epoch)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
-    return best
+class MyTrainer:
+    def __init__(self, cfg): ...
+    def train_one_trial(self, trial_number: int = 0) -> float: ...
 ```
 
-Everything else — search space, study, W&B, write-back — stays the same.
+Then in `config.yaml`:
+
+```yaml
+tuning:
+  trainer_class: my.module.MyTrainer
+  targets:
+    lr: optimizer.learning_rate   # whichever cfg paths your framework reads
+    ...
+```
+
+No edits to `src/tuning/` are required.

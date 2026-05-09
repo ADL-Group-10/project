@@ -1,20 +1,8 @@
 """
-src/tuning/write_best.py
-
 Patch the best trial's hyperparameters back into config.yaml.
 
-Why: after the study completes, Dharmini runs the final v1 and v2 training
-using config.yaml as-is. Writing the tuned HPs back into the yaml is the
-cleanest hand-off — no env vars, no per-run flags.
-
-Mapping (trial.params key → yaml path):
-    lr             → training.lr
-    batch_size     → training.batch_size
-    warmup_epochs  → training.warmup_epochs
-    box_weight     → loss.box_weight
-    focal_gamma    → loss.focal_gamma
-
-A timestamped backup of config.yaml is saved alongside the original.
+The HP → yaml-path mapping is read from cfg.tuning.targets, so this module
+is framework-agnostic. A timestamped backup is saved before overwriting.
 """
 
 from __future__ import annotations
@@ -26,16 +14,6 @@ import optuna
 from omegaconf import OmegaConf
 
 from src.common_utils import get_logger
-
-
-# trial.params name  →  list of yaml keys (walk from root)
-_HP_TO_YAML: dict[str, tuple[str, ...]] = {
-    "lr":             ("training", "lr"),
-    "batch_size":     ("training", "batch_size"),
-    "warmup_epochs":  ("training", "warmup_epochs"),
-    "box_weight":     ("loss",     "box_weight"),
-    "focal_gamma":    ("loss",     "focal_gamma"),
-}
 
 
 def write_best_to_config(
@@ -63,34 +41,30 @@ def write_best_to_config(
         ValueError: study has no completed trials.
     """
     logger = get_logger("tuning.write_best")
+    path = Path(config_path)
 
     if not study.trials or study.best_trial is None:
         raise ValueError("Study has no best trial — nothing to write.")
 
-    path = Path(config_path)
     if not path.exists():
         raise FileNotFoundError(f"config.yaml not found: {path}")
 
     cfg = OmegaConf.load(path)
     best_params = study.best_trial.params
+    targets = cfg.tuning.targets
     diff: dict = {}
 
-    for hp_name, yaml_path in _HP_TO_YAML.items():
+    for hp_name, key_path in targets.items():
         if hp_name not in best_params:
             continue
+        key_path = str(key_path)
         new_val  = best_params[hp_name]
-        key_path = ".".join(yaml_path)
         old_val  = OmegaConf.select(cfg, key_path, default=None)
         if old_val == new_val:
             continue
         diff[key_path] = (old_val, new_val)
         OmegaConf.update(cfg, key_path, new_val, merge=False)
 
-    # After writing global values, sync variant lr blocks
-    for variant in ("v1", "v2"):
-        path = f"variants.{variant}.training.lr"
-        OmegaConf.update(cfg, path, best_params["lr"], merge=False)
-    
     if dry_run:
         logger.info("[dry-run] would change:")
         for k, (old, new) in diff.items():

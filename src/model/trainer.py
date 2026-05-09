@@ -1,74 +1,66 @@
-"""
-src/model/trainer.py  (FIXED)
-
-Changes from original:
-  - All values read from cfg — no hardcoding
-  - cos_lr=True  → cosine LR scheduler (the drop curve TA wants)
-  - lrf           → read from cfg.training.lrf         (add lrf: 0.01 to yaml)
-  - dropout       → read from cfg.training.dropout     (add dropout: 0.1 to yaml)
-  - trial_img_size→ read from cfg.tuning.trial_img_size (add trial_img_size: 320 to yaml)
-  - results_dir   → read from cfg.paths.results_dir    (no hardcoded paths)
-  - wandb         → removed _setup_wandb(), Ultralytics logs automatically
-                    set env vars in notebook before training instead
-"""
+"""Ultralytics trainer. Implements src.model.protocol.Trainer."""
 
 import os
-import torch
 from pathlib import Path
+
+import torch
 from ultralytics import YOLO, settings as ul_settings
 
-from src.common_utils import load_config
+from src.common_utils import get_device_str
 from src.data import DataPipeline
 
 
 def _configure_wandb(cfg) -> None:
-    """
-    Tell Ultralytics to log to the correct WandB project.
-    No manual wandb.init() — Ultralytics handles it automatically.
-    Call this once before model.train().
-    """
+    """Point Ultralytics' built-in WandB logger at the configured project."""
     ul_settings.update({"wandb": True})
     os.environ["WANDB_PROJECT"] = str(cfg.logging.wandb_project)
     os.environ["WANDB_ENTITY"]  = str(cfg.logging.wandb_entity)
-    os.environ["WANDB_DIR"]     = str(cfg.paths.wandb_dir) 
+    os.environ["WANDB_DIR"]     = str(cfg.paths.wandb_dir)
     print(f"[trainer] WandB : project={cfg.logging.wandb_project}, entity={cfg.logging.wandb_entity}")
 
 
-class YOLOv9Trainer:
+def _cos_lr_from_cfg(scheduler: str) -> bool:
+    """Map cfg.training.lr_scheduler to Ultralytics' cos_lr boolean."""
+    s = str(scheduler).lower()
+    if s == "cosine":
+        return True
+    if s == "linear":
+        return False
+    raise ValueError(f"Unsupported lr_scheduler '{scheduler}' for UltralyticsTrainer — use 'cosine' or 'linear'.")
+
+
+class UltralyticsTrainer:
+    """One trainer; variant behavior comes from cfg."""
 
     def __init__(self, cfg) -> None:
         self.cfg    = cfg
-        self.device = self._get_device()
+        self.device = get_device_str(cfg)
+        self.model  = YOLO(cfg.model.weights)
+        print(f"[trainer] {cfg.model.weights} loaded on {self.device}")
 
-        self.model = YOLO("yolov9c.pt")
-        print(f"[trainer] YOLOv9 loaded on {self.device}")
+        augment      = "snow" if cfg.augmentation.use_snow_aug else "base"
+        domain_shift = bool(getattr(cfg.domain_shift, "enabled", False))
+        pipeline     = DataPipeline("config.yaml")
+        dataset_path, self._aug = pipeline.run(augment=augment, domain_shift=domain_shift)
+        self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
 
-        # Read from cfg — no hardcoded paths
-        self.base_project = str(cfg.paths.results_dir)
+        self.results_dir = Path(cfg.paths.results_dir)
+        self.results_dir.mkdir(parents=True, exist_ok=True)
 
-        if Path(cfg.paths.yolo_output + "/dataset.yaml").exists():
-            self.dataset_yaml = cfg.paths.yolo_output + "/dataset.yaml"
-            print("[trainer] Using existing dataset.")
-        else:
-            pipeline = DataPipeline("config.yaml")
-            dataset_path, _ = pipeline.run(augment="base")
-            self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
-
-        self.out_dir = Path(self.base_project)
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-
-    # ── Public API ────────────────────────────────────────────────
-
-    def train(self, name="v1") -> None:
-        """Full training run — call from notebook."""
+    def train(self, name: str | None = None) -> None:
+        """Full training run."""
+        name = name or str(self.cfg.experiment)
         t  = self.cfg.training
         lo = self.cfg.loss
 
-        # WandB — Ultralytics auto-logs, just set the destination
         os.environ["WANDB_NAME"] = name
         _configure_wandb(self.cfg)
+        self._attach_albumentations()
+        self._attach_val_cadence()
+        self._attach_watch_model()
+        self._attach_cfg_snapshot()
 
-        self.results = self.model.train(
+        self.model.train(
             # --- DATA & HARDWARE ---
             data          = self.dataset_yaml,
             imgsz         = self.cfg.model.img_size,
@@ -78,32 +70,36 @@ class YOLOv9Trainer:
             # --- TRAINING PARAMS ---
             epochs        = t.epochs,
             batch         = t.batch_size,
-            optimizer     = t.optimizer.upper(),
+            optimizer     = t.optimizer.capitalize(),
             weight_decay  = t.weight_decay,
             warmup_epochs = t.warmup_epochs,
             patience      = t.early_stopping_patience,
             seed          = self.cfg.project.seed,
+            freeze        = 10 if self.cfg.model.freeze_backbone else 0,
+            save_period   = int(t.save_every_n_epochs),
 
-            # --- LR SCHEDULER (what TA wants to see) ---
-            lr0           = t.lr,       # set to 0.004 in yaml
-            lrf           = t.lrf,      # set to 0.01  in yaml → drops to lr0*lrf
-            cos_lr        = True,       # cosine curve always on
+            # --- LR SCHEDULER ---
+            lr0           = t.lr,
+            lrf           = t.lrf,
+            cos_lr        = _cos_lr_from_cfg(t.lr_scheduler),
 
-            # --- REGULARIZATION (stops val loss going up) ---
-            dropout       = t.dropout,  # set to 0.1 in yaml
+            # --- REGULARIZATION ---
+            dropout       = t.dropout,
 
-            # --- LOSS WEIGHTS ---
+            # --- LOSS ---
             box           = lo.box_weight,
             cls           = lo.cls_weight,
             dfl           = lo.dfl_weight,
+            fl_gamma      = lo.focal_gamma,
 
             # --- OUTPUT ---
-            project       = self.base_project,
+            project       = str(self.results_dir),
             name          = name,
             verbose       = True,
             exist_ok      = True,
+            plots         = True,
         )
-        print(f"[trainer] Done. Best model: {self.base_project}/{name}/weights/best.pt")
+        print(f"[trainer] Done. Best model: {self.results_dir}/{name}/weights/best.pt")
 
     def validate(self) -> dict:
         """Run validation, return metrics dict."""
@@ -120,94 +116,126 @@ class YOLOv9Trainer:
             "recall":    metrics.box.mr,
         }
 
-    def train_one_trial(self, trial_cfg: dict) -> float:
+    def train_one_trial(self, trial_number: int = 0) -> float:
         """
-        For Optuna tuning.
-        All values from cfg or trial_cfg — nothing hardcoded.
-        Uses cfg.tuning.trial_img_size (320) for fast trials.
-        WandB disabled during trials to avoid run spam.
+        Optuna trial. HPs are read from self.cfg — the tuner overlays
+        suggested values via apply_hp_to_config before instantiating us.
+        WandB is disabled here to avoid run spam during tuning.
         """
-        
-        # Disable WandB during Optuna trials — too many runs
         ul_settings.update({"wandb": False})
 
-        self.model = YOLO("yolov9c.pt")  # fresh model per trial
+        self.model = YOLO(self.cfg.model.weights)  # fresh weights per trial
+        self._attach_albumentations()
+        self._attach_val_cadence()
         self.model.train(
             # --- DATA & HARDWARE ---
             data          = self.dataset_yaml,
-            imgsz         = self.cfg.tuning.trial_img_size,  # 320 from yaml
+            imgsz         = self.cfg.tuning.trial_img_size,
             device        = self.device,
             workers       = self.cfg.training.num_workers,
 
-            # --- TUNED BY OPTUNA ---
+            # --- TRAINING PARAMS ---
             epochs        = self.cfg.tuning.trial_epochs,
-            batch         = trial_cfg.get("batch_size",    self.cfg.training.batch_size),
-            lr0           = trial_cfg.get("lr",            self.cfg.training.lr),
-            warmup_epochs = trial_cfg.get("warmup_epochs", self.cfg.training.warmup_epochs),
-            box           = trial_cfg.get("box_weight",    self.cfg.loss.box_weight),
+            batch         = self.cfg.training.batch_size,
+            lr0           = self.cfg.training.lr,
+            warmup_epochs = self.cfg.training.warmup_epochs,
+            box           = self.cfg.loss.box_weight,
+            freeze        = 10 if self.cfg.model.freeze_backbone else 0,
 
             # --- LR SCHEDULER ---
             lrf           = self.cfg.training.lrf,
-            cos_lr        = True,
+            cos_lr        = _cos_lr_from_cfg(self.cfg.training.lr_scheduler),
 
             # --- REGULARIZATION ---
             dropout       = self.cfg.training.dropout,
             weight_decay  = self.cfg.training.weight_decay,
 
-            # --- FIXED ---
-            optimizer     = self.cfg.training.optimizer.upper(),
+            # --- LOSS ---
+            optimizer     = self.cfg.training.optimizer.capitalize(),
             cls           = self.cfg.loss.cls_weight,
             dfl           = self.cfg.loss.dfl_weight,
+            fl_gamma      = self.cfg.loss.focal_gamma,
 
             # --- OUTPUT ---
-            project       = str(Path(self.cfg.paths.results_dir).parent / "optuna_trials"),
-            name          = f"trial_{trial_cfg.get('trial_number', 0)}",
+            project       = str(self.results_dir.parent / "optuna_trials"),
+            name          = f"trial_{trial_number}",
             verbose       = False,
             exist_ok      = True,
+            plots         = True,
         )
-        
+
         metrics = self.validate()
         torch.cuda.empty_cache()
-        del self.model
         return metrics["mAP50"]
 
     # ── Private ───────────────────────────────────────────────────
 
-    def _get_device(self) -> str:
-        import torch
-        requested = self.cfg.project.device
-        if "cuda" in requested and torch.cuda.is_available():
-            return "0"
-        return "cpu"
+    def _compose_for(self, split: str):
+        """Return the Albumentations Compose for a given split, or None."""
+        if isinstance(self._aug, dict):
+            return self._aug.get(split)
+        return self._aug if split == "train" else None
 
+    def _attach_albumentations(self) -> None:
+        """Inject the data-layer Compose into Ultralytics' built-in Albumentations slot."""
+        from ultralytics.data.augment import Albumentations as ULAlb
 
-class YOLOv9TrainerSA(YOLOv9Trainer):
-    """V2 — snow augmentation."""
+        def _patch(trainer):
+            loaders = [("train", getattr(trainer, "train_loader", None))]
+            v = getattr(getattr(trainer, "validator", None), "dataloader", None)
+            if v is not None:
+                loaders.append(("val", v))
+            for split, loader in loaders:
+                compose = self._compose_for(split)
+                if not (loader and compose):
+                    continue
+                for t in loader.dataset.transforms.transforms:
+                    if isinstance(t, ULAlb):
+                        t.transform = compose
+                        t.p = 1.0
 
-    def __init__(self, cfg) -> None:
-        super().__init__(cfg)
-        pipeline = DataPipeline("config.yaml")
-        dataset_path, _ = pipeline.run(augment="snow")
-        self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
-        self.out_dir = Path(self.base_project) / "v2"
-        print("[trainer_sa] V2 Snow-Augmented Trainer ready.")
+        self.model.add_callback("on_pretrain_routine_start", _patch)
 
-    def train(self) -> None:
-        super().train(name="v2")
-        print(f"[trainer_sa] Done. Best model: {self.out_dir}/weights/best.pt")
+    def _attach_val_cadence(self) -> None:
+        """Run validation every cfg.training.val_every_n_epochs epochs (plus the final epoch)."""
+        cadence = int(self.cfg.training.val_every_n_epochs)
+        if cadence <= 1:
+            return  # default: validate every epoch
 
+        def _patch(trainer):
+            epoch = int(getattr(trainer, "epoch", 0))
+            last  = epoch >= int(getattr(trainer, "epochs", 0)) - 1
+            trainer.args.val = ((epoch + 1) % cadence == 0) or last
 
-class YOLOv9TrainerDS(YOLOv9Trainer):
-    """V3 — Domain Shift Experiment."""
+        self.model.add_callback("on_train_epoch_start", _patch)
 
-    def __init__(self, cfg) -> None:
-        super().__init__(cfg)
-        pipeline = DataPipeline("config.yaml")
-        dataset_path, _ = pipeline.run(augment="snow", domain_shift=True)
-        self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
-        self.out_dir = Path(self.base_project) / "v3_ds"
-        print("[trainer_ds] V3 Domain-Shift Trainer Initialized.")
+    def _attach_watch_model(self) -> None:
+        """Call wandb.watch on the underlying torch model when cfg.logging.watch_model is true."""
+        if not bool(getattr(self.cfg.logging, "watch_model", False)):
+            return
 
-    def train(self) -> None:
-        super().train(name="v3_ds")
-        print(f"[trainer_ds] Done. Best model: {self.out_dir}/weights/best.pt")
+        def _patch(trainer):
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.watch(trainer.model)
+            except ImportError:
+                pass
+
+        self.model.add_callback("on_train_start", _patch)
+
+    def _attach_cfg_snapshot(self) -> None:
+        """Push the merged cfg to wandb.config once the run is active."""
+        def _patch(trainer):
+            try:
+                import wandb
+                from omegaconf import OmegaConf
+                if wandb.run is not None:
+                    wandb.config.update(
+                        OmegaConf.to_container(self.cfg, resolve=True),
+                        allow_val_change=True,
+                    )
+            except ImportError:
+                pass
+
+        self.model.add_callback("on_train_start", _patch)

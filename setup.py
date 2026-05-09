@@ -1,11 +1,4 @@
-"""
-setup.py — run once from project root:  pip install -e .
-
-After this, any notebook in the repo can import src/ cleanly:
-    from src.common_utils import load_config
-    from src.data         import get_dataloader
-    from src.models       import YOLOv9
-"""
+"""Editable install for the project. Run once: `pip install -e .`"""
 
 from setuptools import setup, find_packages
 
