@@ -19,7 +19,6 @@ def suggest_hyperparameters(trial: optuna.Trial, cfg: DictConfig) -> dict[str, A
         "lrf":           trial.suggest_float("lrf", float(s.lrf[0]), float(s.lrf[1])),
         "batch_size":    trial.suggest_categorical("batch_size", [int(b) for b in s.batch_size]),
         "box_weight":    trial.suggest_float("box_weight", float(s.box_weight[0]), float(s.box_weight[1])),
-        "focal_gamma":   trial.suggest_float("focal_gamma", float(s.focal_gamma[0]), float(s.focal_gamma[1])),
         "warmup_epochs": trial.suggest_int("warmup_epochs", int(s.warmup_epochs[0]), int(s.warmup_epochs[1])),
     }
 

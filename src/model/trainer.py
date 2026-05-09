@@ -1,6 +1,10 @@
 """Ultralytics trainer. Implements src.model.protocol.Trainer."""
 
+import gc
 import os
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 from pathlib import Path
 
 import torch
@@ -55,10 +59,12 @@ class UltralyticsTrainer:
 
         os.environ["WANDB_NAME"] = name
         _configure_wandb(self.cfg)
+        self._init_wandb_run(name)
         self._attach_albumentations()
         self._attach_val_cadence()
         self._attach_watch_model()
         self._attach_cfg_snapshot()
+        self._attach_cache_clear()
 
         self.model.train(
             # --- DATA & HARDWARE ---
@@ -90,16 +96,15 @@ class UltralyticsTrainer:
             box           = lo.box_weight,
             cls           = lo.cls_weight,
             dfl           = lo.dfl_weight,
-            fl_gamma      = lo.focal_gamma,
 
             # --- OUTPUT ---
-            project       = str(self.results_dir),
+            project       = str(self.results_dir.resolve()),
             name          = name,
             verbose       = True,
             exist_ok      = True,
             plots         = True,
         )
-        print(f"[trainer] Done. Best model: {self.results_dir}/{name}/weights/best.pt")
+        print(f"[trainer] Done. Best model: {self.results_dir.resolve()}/{name}/weights/best.pt")
 
     def validate(self) -> dict:
         """Run validation, return metrics dict."""
@@ -127,6 +132,7 @@ class UltralyticsTrainer:
         self.model = YOLO(self.cfg.model.weights)  # fresh weights per trial
         self._attach_albumentations()
         self._attach_val_cadence()
+        self._attach_cache_clear()
         self.model.train(
             # --- DATA & HARDWARE ---
             data          = self.dataset_yaml,
@@ -154,10 +160,9 @@ class UltralyticsTrainer:
             optimizer     = self.cfg.training.optimizer.capitalize(),
             cls           = self.cfg.loss.cls_weight,
             dfl           = self.cfg.loss.dfl_weight,
-            fl_gamma      = self.cfg.loss.focal_gamma,
 
             # --- OUTPUT ---
-            project       = str(self.results_dir.parent / "optuna_trials"),
+            project       = str((self.results_dir.parent / "optuna_trials").resolve()),
             name          = f"trial_{trial_number}",
             verbose       = False,
             exist_ok      = True,
@@ -223,6 +228,35 @@ class UltralyticsTrainer:
                 pass
 
         self.model.add_callback("on_train_start", _patch)
+
+    def _init_wandb_run(self, name: str) -> None:
+        """
+        Pre-init wandb.run with our project name so Ultralytics' WandB callback
+        inherits it. Without this, Ultralytics derives the wandb project name
+        from `trainer.args.project` (the output dir), giving a wrong project.
+        """
+        if not getattr(self.cfg.logging, "wandb_project", None):
+            return
+        try:
+            import wandb
+        except ImportError:
+            return
+        if wandb.run is not None:
+            return
+        wandb.init(
+            project = str(self.cfg.logging.wandb_project),
+            entity  = getattr(self.cfg.logging, "wandb_entity", None),
+            name    = name,
+            dir     = str(self.cfg.paths.wandb_dir),
+            reinit  = True,
+        )
+
+    def _attach_cache_clear(self) -> None:
+        """Release CUDA cache and Python objects between train and val each epoch."""
+        def _patch(_trainer):
+            torch.cuda.empty_cache()
+            gc.collect()
+        self.model.add_callback("on_train_epoch_end", _patch)
 
     def _attach_cfg_snapshot(self) -> None:
         """Push the merged cfg to wandb.config once the run is active."""

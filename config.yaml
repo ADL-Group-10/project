@@ -54,7 +54,7 @@ variants:
 
 model:
   architecture: yolov9              # informational; weights file determines actual arch
-  weights: yolov9-c.pt
+  weights: yolov9c.pt
   yolov9_repo: third_party/yolov9   # informational; Ultralytics auto-fetches
   trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
@@ -79,7 +79,7 @@ loss:
   box_weight: 8.925879806965067
   cls_weight: 0.5
   dfl_weight: 1.5
-  focal_gamma: 0.8993475643167195
+  focal_gamma: 0.8993475643167195   # not used for Ultralytics; kept for other frameworks
   use_pgi: true                     # YOLOv9-architecture-internal; no Ultralytics toggle
 augmentation:
   use_snow_aug: false
@@ -150,7 +150,6 @@ tuning:
     batch_size: training.batch_size
     warmup_epochs: training.warmup_epochs
     box_weight: loss.box_weight
-    focal_gamma: loss.focal_gamma
   n_trials: 60
   trial_img_size: 320
   timeout_seconds: 7200
@@ -171,10 +170,7 @@ tuning:
     box_weight:
     - 5.0
     - 10.0
-    focal_gamma:
-    - 0.5
-    - 2.5
-    warmup_epochs: 
+    warmup_epochs:
     - 1
     - 5
     lrf:

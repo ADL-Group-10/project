@@ -116,11 +116,14 @@ def _build_callbacks(cfg: DictConfig) -> list:
             )
             return callbacks
 
+    tuning_cfg = OmegaConf.to_container(cfg.tuning, resolve=True)
+    tuning_cfg.pop("direction", None)
+
     wandb_kwargs: dict = {
         "project": str(cfg.logging.wandb_project),
         "group":   f"optuna-{cfg.tuning.study_name}",
         "dir":     str(cfg.paths.wandb_dir),
-        "config":  OmegaConf.to_container(cfg.tuning, resolve=True),
+        "config":  tuning_cfg,
     }
     entity = getattr(cfg.logging, "wandb_entity", None)
     if entity:
