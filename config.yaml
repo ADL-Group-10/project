@@ -63,8 +63,9 @@ model:
 
 training:
   epochs: 100
-  batch_size: 16
+  batch_size: 8
   num_workers: 4
+  cache: disk
   optimizer: adam
   lr: 0.004
   lrf: 0.01
@@ -150,10 +151,11 @@ tuning:
     batch_size: training.batch_size
     warmup_epochs: training.warmup_epochs
     box_weight: loss.box_weight
-  n_trials: 60
+  n_trials: 30
   trial_img_size: 320
+  trial_fraction: 0.5
   timeout_seconds: 7200
-  trial_epochs: 25
+  trial_epochs: 20
   direction: maximize
   metric: val_map50
   pruner: hyperband
@@ -162,11 +164,10 @@ tuning:
   search_space:
     lr:
     - 0.0001
-    - 0.01
+    - 0.005
     batch_size:
+    - 4
     - 8
-    - 16
-    - 32
     box_weight:
     - 5.0
     - 10.0

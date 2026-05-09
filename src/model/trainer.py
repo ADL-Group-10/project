@@ -83,6 +83,7 @@ class UltralyticsTrainer:
             seed          = self.cfg.project.seed,
             freeze        = 10 if self.cfg.model.freeze_backbone else 0,
             save_period   = int(t.save_every_n_epochs),
+            cache         = str(t.cache),
 
             # --- LR SCHEDULER ---
             lr0           = t.lr,
@@ -155,6 +156,7 @@ class UltralyticsTrainer:
             box           = self.cfg.loss.box_weight,
             freeze        = 10 if self.cfg.model.freeze_backbone else 0,
             patience      = self.cfg.training.early_stopping_patience,
+            fraction      = float(self.cfg.tuning.trial_fraction),
 
             # --- LR SCHEDULER ---
             lrf           = self.cfg.training.lrf,
@@ -197,34 +199,33 @@ class UltralyticsTrainer:
         return self._aug if split == "train" else None
 
     def _attach_albumentations(self) -> None:
-        """Inject the data-layer Compose into Ultralytics' built-in Albumentations slot."""
+        """
+        Replace Ultralytics' Albumentations with the data-layer Compose.
+
+        Ultralytics rebuilds the dataloader on close_mosaic and on OOM auto-retry,
+        which would wipe a per-instance patch. We monkey-patch the class __init__
+        so every Albumentations created in this process — including post-rebuild —
+        is born with our Compose, bbox_params, and contains_spatial=True.
+        """
         import albumentations as A
         from ultralytics.data.augment import Albumentations as ULAlb
 
-        def _strip(compose):
-            """Drop trailing Resize/Normalize — Ultralytics handles those itself."""
-            kept = [t for t in compose.transforms
-                    if not isinstance(t, (A.Resize, A.Normalize))]
-            return A.Compose(kept, bbox_params=A.BboxParams(
-                format="yolo", label_fields=["class_labels"], min_visibility=0.3,
-            ))
+        train_compose = self._compose_for("train")
+        if train_compose is None:
+            return
 
-        def _patch(trainer):
-            loaders = [("train", getattr(trainer, "train_loader", None))]
-            v = getattr(getattr(trainer, "validator", None), "dataloader", None)
-            if v is not None:
-                loaders.append(("val", v))
-            for split, loader in loaders:
-                compose = self._compose_for(split)
-                if not (loader and compose):
-                    continue
-                stripped = _strip(compose)
-                for t in loader.dataset.transforms.transforms:
-                    if isinstance(t, ULAlb):
-                        t.transform = stripped
-                        t.p = 1.0
+        kept = [t for t in train_compose.transforms
+                if not isinstance(t, (A.Resize, A.Normalize))]
+        stripped = A.Compose(kept, bbox_params=A.BboxParams(
+            format="yolo", label_fields=["class_labels"], min_visibility=0.3,
+        ))
 
-        self.model.add_callback("on_pretrain_routine_start", _patch)
+        def _patched_init(ulalb_self, p=1.0, transforms=None):
+            ulalb_self.p = 1.0
+            ulalb_self.transform = stripped
+            ulalb_self.contains_spatial = True
+
+        ULAlb.__init__ = _patched_init
 
     def _attach_val_cadence(self) -> None:
         """Run validation every cfg.training.val_every_n_epochs epochs (plus the final epoch)."""
