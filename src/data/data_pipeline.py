@@ -368,11 +368,11 @@ if __name__ == "__main__":
                             brightness_limit=tuple(snow_cfg["brightness_jitter"]["brightness_limit"]),
                             contrast_limit=0, p=1.0),
         "snow_overlay": A.RandomSnow(
-                            snow_point_lower=snow_cfg["snow_overlay"]["snow_point_lower"],
-                            snow_point_upper=snow_cfg["snow_overlay"]["snow_point_upper"],
+                            snow_point_range=(snow_cfg["snow_overlay"]["snow_point_lower"],
+                                              snow_cfg["snow_overlay"]["snow_point_upper"]),
                             p=1.0),
         "motion_blur":  A.MotionBlur(blur_limit=tuple(snow_cfg["motion_blur"]["blur_limit"]), p=1.0),
-        "invert":       A.Solarize(threshold=tuple(snow_cfg["invert"]["threshold"]), p=1.0),
+        "invert":       A.Solarize(threshold_range=tuple(t / 255.0 for t in snow_cfg["invert"]["threshold"]), p=1.0),
     }
     single_pipelines = {name: wrap_single(t) for name, t in singles.items()}
 

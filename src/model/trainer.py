@@ -97,6 +97,13 @@ class UltralyticsTrainer:
             cls           = lo.cls_weight,
             dfl           = lo.dfl_weight,
 
+            # --- AUGMENTATION (cfg-driven; our Compose owns flip+HSV, so disable Ultralytics' built-ins) ---
+            fliplr        = 0.0,
+            hsv_h         = 0.0,
+            hsv_s         = 0.0,
+            hsv_v         = 0.0,
+            mosaic        = float(self.cfg.augmentation.standard.mosaic_p),
+
             # --- OUTPUT ---
             project       = str(self.results_dir.resolve()),
             name          = name,
@@ -106,11 +113,11 @@ class UltralyticsTrainer:
         )
         print(f"[trainer] Done. Best model: {self.results_dir.resolve()}/{name}/weights/best.pt")
 
-    def validate(self) -> dict:
-        """Run validation, return metrics dict."""
+    def validate(self, imgsz: int | None = None) -> dict:
+        """Run validation; defaults to cfg.model.img_size, overridable per call."""
         metrics = self.model.val(
             data    = self.dataset_yaml,
-            imgsz   = self.cfg.model.img_size,
+            imgsz   = int(imgsz) if imgsz is not None else int(self.cfg.model.img_size),
             device  = self.device,
             verbose = False,
         )
@@ -147,6 +154,7 @@ class UltralyticsTrainer:
             warmup_epochs = self.cfg.training.warmup_epochs,
             box           = self.cfg.loss.box_weight,
             freeze        = 10 if self.cfg.model.freeze_backbone else 0,
+            patience      = self.cfg.training.early_stopping_patience,
 
             # --- LR SCHEDULER ---
             lrf           = self.cfg.training.lrf,
@@ -161,6 +169,13 @@ class UltralyticsTrainer:
             cls           = self.cfg.loss.cls_weight,
             dfl           = self.cfg.loss.dfl_weight,
 
+            # --- AUGMENTATION (cfg-driven; our Compose owns flip+HSV) ---
+            fliplr        = 0.0,
+            hsv_h         = 0.0,
+            hsv_s         = 0.0,
+            hsv_v         = 0.0,
+            mosaic        = float(self.cfg.augmentation.standard.mosaic_p),
+
             # --- OUTPUT ---
             project       = str((self.results_dir.parent / "optuna_trials").resolve()),
             name          = f"trial_{trial_number}",
@@ -169,7 +184,7 @@ class UltralyticsTrainer:
             plots         = True,
         )
 
-        metrics = self.validate()
+        metrics = self.validate(imgsz=self.cfg.tuning.trial_img_size)
         torch.cuda.empty_cache()
         return metrics["mAP50"]
 
@@ -183,7 +198,16 @@ class UltralyticsTrainer:
 
     def _attach_albumentations(self) -> None:
         """Inject the data-layer Compose into Ultralytics' built-in Albumentations slot."""
+        import albumentations as A
         from ultralytics.data.augment import Albumentations as ULAlb
+
+        def _strip(compose):
+            """Drop trailing Resize/Normalize — Ultralytics handles those itself."""
+            kept = [t for t in compose.transforms
+                    if not isinstance(t, (A.Resize, A.Normalize))]
+            return A.Compose(kept, bbox_params=A.BboxParams(
+                format="yolo", label_fields=["class_labels"], min_visibility=0.3,
+            ))
 
         def _patch(trainer):
             loaders = [("train", getattr(trainer, "train_loader", None))]
@@ -194,9 +218,10 @@ class UltralyticsTrainer:
                 compose = self._compose_for(split)
                 if not (loader and compose):
                     continue
+                stripped = _strip(compose)
                 for t in loader.dataset.transforms.transforms:
                     if isinstance(t, ULAlb):
-                        t.transform = compose
+                        t.transform = stripped
                         t.p = 1.0
 
         self.model.add_callback("on_pretrain_routine_start", _patch)

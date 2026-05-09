@@ -55,8 +55,7 @@ class SnowAugmentation:
         if cfg.get("snow_overlay", {}).get("enabled", False):
             so = cfg["snow_overlay"]
             transforms.append(A.RandomSnow(
-                snow_point_lower=so["snow_point_lower"],
-                snow_point_upper=so["snow_point_upper"],
+                snow_point_range=(so["snow_point_lower"], so["snow_point_upper"]),
                 p=so["p"],
             ))
 
@@ -78,7 +77,7 @@ class SnowAugmentation:
         if cfg.get("invert", {}).get("enabled", False):
             inv = cfg["invert"]
             transforms.append(A.Solarize(
-                threshold=tuple(inv["threshold"]),
+                threshold_range=tuple(t / 255.0 for t in inv["threshold"]),
                 p=inv["p"],
             ))
 

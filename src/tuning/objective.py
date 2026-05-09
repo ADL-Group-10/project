@@ -5,7 +5,7 @@ from __future__ import annotations
 import optuna
 from omegaconf import DictConfig
 
-from src.common_utils import get_logger, set_trial_seed
+from src.common_utils import get_logger
 from src.model import build_trainer
 
 from .search_space import suggest_hyperparameters, apply_hp_to_config
@@ -17,8 +17,6 @@ def build_objective(base_cfg: DictConfig):
     metric_name = str(base_cfg.tuning.metric)
 
     def objective(trial: optuna.Trial) -> float:
-        set_trial_seed(base_cfg, trial.number)
-
         hp = suggest_hyperparameters(trial, base_cfg)
         logger.info(
             f"[trial {trial.number}] suggested: "
