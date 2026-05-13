@@ -89,44 +89,44 @@ augmentation:
     hsv_h: 0.015
     hsv_s: 0.7
     hsv_v: 0.4
-    mosaic_p: 0.5
+    mosaic_p: 0.8
   snow:
     desaturation:
       enabled: true
       saturation_limit:
-      - -0.4
-      - -0.1
-      p: 0.4
+      - -0.6
+      - -0.2
+      p: 0.6
     blur:
       enabled: true
       blur_limit:
       - 3
-      - 5
+      - 7
       streak_p: 0.3
-      p: 0.3
+      p: 0.5
     brightness_jitter:
       enabled: true
       brightness_limit:
-      - -0.10
-      - 0.03
-      p: 0.5
+      - -0.15
+      - 0.05
+      p: 0.7
     snow_overlay:
       enabled: true
-      snow_point_lower: 0.15
-      snow_point_upper: 0.35
-      p: 0.85
+      snow_point_lower: 0.25
+      snow_point_upper: 0.55
+      p: 0.7
     perspective:
       enabled: true
       scale:
-      - 0.03
-      - 0.07
-      p: 0.3
+      - 0.05
+      - 0.10
+      p: 0.4
     motion_blur:
       enabled: true
       blur_limit:
-      - 3
-      - 7
-      p: 0.3
+      - 5
+      - 11
+      p: 0.4
     invert:
       enabled: false
       threshold:
@@ -190,38 +190,38 @@ domain_shift:
     desaturation:
       enabled: true
       saturation_limit:
-      - -0.3
-      - -0.08
-      p: 0.3
+      - -0.4
+      - -0.15
+      p: 0.5
     blur:
       enabled: true
       blur_limit:
       - 3
       - 5
-      p: 0.2
+      p: 0.3
     brightness_jitter:
       enabled: true
       brightness_limit:
-      - -0.07
-      - 0.02
-      p: 0.4
+      - -0.10
+      - 0.03
+      p: 0.5
     snow_overlay:
       enabled: true
-      snow_point_lower: 0.12
-      snow_point_upper: 0.25
-      p: 0.8
+      snow_point_lower: 0.20
+      snow_point_upper: 0.35
+      p: 0.6
     perspective:
       enabled: true
       scale:
       - 0.02
-      - 0.04
-      p: 0.2
+      - 0.05
+      p: 0.3
     motion_blur:
       enabled: true
       blur_limit:
       - 3
       - 5
-      p: 0.2
+      p: 0.3
     invert:
       enabled: false
       threshold:
@@ -232,38 +232,38 @@ domain_shift:
     desaturation:
       enabled: true
       saturation_limit:
-      - -0.6
-      - -0.3
-      p: 0.6
+      - -0.8
+      - -0.4
+      p: 0.8
     blur:
-      enabled: true
-      blur_limit:
-      - 3
-      - 7
-      p: 0.5
-    brightness_jitter:
-      enabled: true
-      brightness_limit:
-      - -0.18
-      - -0.03
-      p: 0.6
-    snow_overlay:
-      enabled: true
-      snow_point_lower: 0.30
-      snow_point_upper: 0.55
-      p: 0.95
-    perspective:
-      enabled: true
-      scale:
-      - 0.05
-      - 0.10
-      p: 0.4
-    motion_blur:
       enabled: true
       blur_limit:
       - 5
       - 11
-      p: 0.4
+      p: 0.7
+    brightness_jitter:
+      enabled: true
+      brightness_limit:
+      - -0.25
+      - -0.05
+      p: 0.8
+    snow_overlay:
+      enabled: true
+      snow_point_lower: 0.40
+      snow_point_upper: 0.75
+      p: 0.85
+    perspective:
+      enabled: true
+      scale:
+      - 0.08
+      - 0.15
+      p: 0.6
+    motion_blur:
+      enabled: true
+      blur_limit:
+      - 9
+      - 17
+      p: 0.6
     invert:
       enabled: false
       threshold:

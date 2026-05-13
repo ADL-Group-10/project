@@ -21,9 +21,6 @@ class DataPipeline:
         path, augs = pipeline.run(augment="snow", domain_shift=True) # per-split pipelines
     """
 
-    _FRAME_WIDTH = 1920
-    _FRAME_HEIGHT = 1080
-
     def __init__(self, config_path: str = "config.yaml", variant: str | None = None) -> None:
         self.config = load_config(config_path, variant=variant)
         self.logger = get_logger(__name__, self.config)
@@ -85,11 +82,6 @@ class DataPipeline:
         std = self.aug_config["standard"]
 
         if augment in ("base", "snow"):
-            # Config values follow YOLO convention (multiplicative gain in [0,1]).
-            # Albumentations.HueSaturationValue uses additive shifts. Scaling sat/val
-            # by 50 (not 255) keeps the perturbation in line with Albumentations'
-            # own defaults (~30); * 255 was way too aggressive and pumped pink/red
-            # tones on any frame with reddish components.
             transforms += [
                 A.HorizontalFlip(p=std["horizontal_flip_p"]),
                 A.HueSaturationValue(
@@ -147,7 +139,6 @@ class DataPipeline:
         mp4_files = [f for f in seq_dir.iterdir() if f.suffix.lower() == ".mp4"]
         png_files = sorted(f for f in seq_dir.iterdir() if f.suffix.lower() == ".png")
 
-        # Handle nested subdirectory (e.g. PNG test sequence)
         if not mp4_files and not png_files:
             for child in seq_dir.iterdir():
                 if child.is_dir():
@@ -166,7 +157,19 @@ class DataPipeline:
             raise FileNotFoundError(f"No .mp4 or .png files found in {seq_dir}")
 
     def _parse_cvat_xml(self, root: ET.Element) -> dict[int, list[list[float]]]:
+        """Parse CVAT 1.1 XML, handling rotated bounding boxes.
+
+        Rotates all 4 corners and takes the axis-aligned envelope —
+        matching the official NVD repo's AnnotationBox.GetStraightBoundingBox().
+        """
         frame_annotations: dict[int, list[list[float]]] = {}
+
+        width_el = root.find("meta//original_size/width")
+        height_el = root.find("meta//original_size/height")
+        if width_el is None or height_el is None:
+            raise ValueError("XML missing <meta><original_size>")
+        frame_w = int(width_el.text)
+        frame_h = int(height_el.text)
 
         for track in root.findall(".//track"):
             if track.get("label") != "car":
@@ -176,22 +179,38 @@ class DataPipeline:
                     continue
 
                 frame_num = int(box.get("frame"))
-                xtl = max(0.0, min(float(box.get("xtl")), self._FRAME_WIDTH))
-                ytl = max(0.0, min(float(box.get("ytl")), self._FRAME_HEIGHT))
-                xbr = max(0.0, min(float(box.get("xbr")), self._FRAME_WIDTH))
-                ybr = max(0.0, min(float(box.get("ybr")), self._FRAME_HEIGHT))
+                xtl = float(box.get("xtl"))
+                ytl = float(box.get("ytl"))
+                xbr = float(box.get("xbr"))
+                ybr = float(box.get("ybr"))
+                rotation = float(box.get("rotation", "0"))
 
-                w, h = xbr - xtl, ybr - ytl
+                cx, cy = (xtl + xbr) / 2, (ytl + ybr) / 2
+                corners = np.array([[xtl, ytl], [xbr, ytl],
+                                    [xbr, ybr], [xtl, ybr]])
+
+                if abs(rotation) > 0.01:
+                    rad = rotation * np.pi / 180
+                    cos_r, sin_r = np.cos(rad), np.sin(rad)
+                    rot_mat = np.array([[cos_r, -sin_r], [sin_r, cos_r]])
+                    corners = (rot_mat @ (corners - [cx, cy]).T).T + [cx, cy]
+
+                x_min = max(0.0, min(float(corners[:, 0].min()), frame_w))
+                y_min = max(0.0, min(float(corners[:, 1].min()), frame_h))
+                x_max = max(0.0, min(float(corners[:, 0].max()), frame_w))
+                y_max = max(0.0, min(float(corners[:, 1].max()), frame_h))
+
+                w, h = x_max - x_min, y_max - y_min
                 if w <= 0 or h <= 0:
                     continue
 
-                x_c = (xtl + w / 2) / self._FRAME_WIDTH
-                y_c = (ytl + h / 2) / self._FRAME_HEIGHT
+                x_c = (x_min + w / 2) / frame_w
+                y_c = (y_min + h / 2) / frame_h
 
                 if frame_num not in frame_annotations:
                     frame_annotations[frame_num] = []
                 frame_annotations[frame_num].append(
-                    [0, x_c, y_c, w / self._FRAME_WIDTH, h / self._FRAME_HEIGHT]
+                    [0, x_c, y_c, w / frame_w, h / frame_h]
                 )
 
         return frame_annotations
@@ -231,12 +250,10 @@ class DataPipeline:
             path = self.raw_dir / name
             if path.exists():
                 return path
-
         norm = seq_name.lower().replace(" ", "_")
         for item in self.raw_dir.iterdir():
             if item.is_dir() and item.stem.lower().replace(" ", "_") == norm:
                 return item
-
         raise FileNotFoundError(f"No directory found for '{seq_name}' in {self.raw_dir}")
 
     def _find_xml(self, seq_dir: Path) -> Path:
@@ -277,7 +294,6 @@ class DataPipeline:
                             raise ValueError(f"{lbl_file.name}:{ln}: invalid class_id {parts[0]}")
                         if not all(0.0 <= float(v) <= 1.0 for v in parts[1:]):
                             raise ValueError(f"{lbl_file.name}:{ln}: values out of [0,1]")
-
         self.logger.info("Validation passed.")
 
     def _exists(self) -> bool:
@@ -300,19 +316,10 @@ class DataPipeline:
                         bboxes.append([float(v) for v in parts[1:]])
         return bboxes, class_labels
 
-    @staticmethod
-    def _draw_bboxes(image: np.ndarray, bboxes: list) -> np.ndarray:
-        h, w = image.shape[:2]
-        for bbox in bboxes:
-            x_c, y_c, bw, bh = bbox
-            x1, y1 = int((x_c - bw / 2) * w), int((y_c - bh / 2) * h)
-            x2, y2 = int((x_c + bw / 2) * w), int((y_c + bh / 2) * h)
-            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        return image
-
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
+    from .visualizer import AnnotationVisualizer as AV
 
     pipeline = DataPipeline()
     pipeline.summary()
@@ -327,24 +334,37 @@ if __name__ == "__main__":
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
 
-    def apply_augmentation(image, bboxes, class_labels, aug):
+    # Try to get CVAT annotations for the raw image (dual boxes)
+    raw_annotations = None
+    stem = sample_path.stem
+    stem_parts = stem.rsplit("_frame_", 1)
+    if len(stem_parts) == 2:
+        try:
+            seq_dir = pipeline._find_dir(stem_parts[0])
+            xml_path = pipeline._find_xml(seq_dir)
+            raw_annotations, _, _ = AV.parse_cvat_frame(
+                str(xml_path), int(stem_parts[1]))
+        except FileNotFoundError:
+            pass
+
+    image = cv2.cvtColor(cv2.imread(str(sample_path)), cv2.COLOR_BGR2RGB)
+    bboxes, class_labels = DataPipeline._read_yolo_label(
+        lbl_dir / (sample_path.stem + ".txt"))
+
+    def apply_and_visualize(image, bboxes, class_labels, aug):
         result = aug(image=image, bboxes=bboxes, class_labels=class_labels)
         out_img = ((result["image"] * std + mean) * 255).clip(0, 255).astype(np.uint8)
-        return DataPipeline._draw_bboxes(out_img, result["bboxes"])
+        return AV.visualize(out_img, result["bboxes"])
 
     def wrap_single(transform):
-        """Wrap a single transform with the Resize+Normalize tail so the
-        decode step in apply_augmentation works the same way."""
         return A.Compose(
             [transform,
              A.Resize(height=pipeline.img_size, width=pipeline.img_size),
              A.Normalize(mean=mean.tolist(), std=std.tolist())],
-            bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels"], min_visibility=0.3),
+            bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels"],
+                                     min_visibility=0.3),
         )
 
-    # Pull params from config so individual demos use the same values as the
-    # real pipeline. Force p=1.0 so each effect is guaranteed visible — the
-    # purpose here is to SHOW what the transform does.
     std_cfg  = pipeline.aug_config["standard"]
     snow_cfg = pipeline.aug_config["snow"]
 
@@ -353,24 +373,21 @@ if __name__ == "__main__":
         "hsv":          A.HueSaturationValue(
                             hue_shift_limit=int(std_cfg["hsv_h"] * 180),
                             sat_shift_limit=int(std_cfg["hsv_s"] * 255),
-                            val_shift_limit=int(std_cfg["hsv_v"] * 255),
-                            p=1.0),
+                            val_shift_limit=int(std_cfg["hsv_v"] * 255), p=1.0),
         "perspective":  A.Perspective(scale=tuple(snow_cfg["perspective"]["scale"]),
                                        keep_size=True, p=1.0),
         "desaturate":   A.HueSaturationValue(
                             hue_shift_limit=0,
                             sat_shift_limit=[int(snow_cfg["desaturation"]["saturation_limit"][0] * 255),
                                              int(snow_cfg["desaturation"]["saturation_limit"][1] * 255)],
-                            val_shift_limit=0,
-                            p=1.0),
+                            val_shift_limit=0, p=1.0),
         "blur":         A.GaussianBlur(blur_limit=tuple(snow_cfg["blur"]["blur_limit"]), p=1.0),
         "brightness":   A.RandomBrightnessContrast(
                             brightness_limit=tuple(snow_cfg["brightness_jitter"]["brightness_limit"]),
                             contrast_limit=0, p=1.0),
         "snow_overlay": A.RandomSnow(
                             snow_point_range=(snow_cfg["snow_overlay"]["snow_point_lower"],
-                                              snow_cfg["snow_overlay"]["snow_point_upper"]),
-                            p=1.0),
+                                              snow_cfg["snow_overlay"]["snow_point_upper"]), p=1.0),
         "motion_blur":  A.MotionBlur(blur_limit=tuple(snow_cfg["motion_blur"]["blur_limit"]), p=1.0),
         "invert":       A.Solarize(threshold_range=tuple(t / 255.0 for t in snow_cfg["invert"]["threshold"]), p=1.0),
     }
@@ -380,58 +397,56 @@ if __name__ == "__main__":
     _, snow_aug = pipeline.run(augment="snow")
     _, ds_augs  = pipeline.run(augment="snow", domain_shift=True)
 
-    image = cv2.cvtColor(cv2.imread(str(sample_path)), cv2.COLOR_BGR2RGB)
-    bboxes, class_labels = DataPipeline._read_yolo_label(lbl_dir / (sample_path.stem + ".txt"))
-
-    short = {"perspective": "persp", "desaturation": "desat", "blur": "blur",
-             "brightness_jitter": "bright", "snow_overlay": "snow",
-             "motion_blur": "motion", "invert": "invert"}
-
-    def active_label(name, cfg_block, include_standard=False):
-        parts = ["flip", "hsv"] if include_standard else []
-        if cfg_block:
-            parts += [short[k] for k in short if cfg_block.get(k, {}).get("enabled", False)]
-        return f"{name}\n({' + '.join(parts)})" if parts else name
-
     ds_cfg = pipeline.config.domain_shift
 
-    # Top row: variants
-    variant_cells = [
-        ("raw", DataPipeline._draw_bboxes(image.copy(), bboxes)),
-        (active_label("V1 base", None, include_standard=True),
-            apply_augmentation(image, bboxes, class_labels, base_aug)),
-        ("V2 full snow",        apply_augmentation(image, bboxes, class_labels, snow_aug)),
-        ("V3 train (light)",    apply_augmentation(image, bboxes, class_labels, ds_augs["train"])),
-        ("V3 test (heavy)",     apply_augmentation(image, bboxes, class_labels, ds_augs["test"])),
-    ]
+    # Raw cell: use CVAT annotations (dual boxes) if available, else YOLO boxes
+    if raw_annotations:
+        raw_vis = AV.visualize(image.copy(), raw_annotations)
+    else:
+        raw_vis = AV.visualize(image.copy(), bboxes)
 
-    # Lower rows: individual transforms
-    individual_cells = [(name, apply_augmentation(image, bboxes, class_labels, p))
-                        for name, p in single_pipelines.items()]
+    variant_cells = {
+        "raw": raw_vis,
+        "V1 base": apply_and_visualize(image, bboxes, class_labels, base_aug),
+        "V2 full snow": apply_and_visualize(image, bboxes, class_labels, snow_aug),
+        "V3 train (light)": apply_and_visualize(image, bboxes, class_labels, ds_augs["train"]),
+        "V3 test (heavy)": apply_and_visualize(image, bboxes, class_labels, ds_augs["test"]),
+    }
 
-    cells = variant_cells + individual_cells
+    # Image 1: variants — raw on top, V1/V2 in middle, V3 at bottom
+    fig1 = plt.figure(figsize=(10, 12), constrained_layout=True)
+    gs = fig1.add_gridspec(3, 2, hspace=0.3)
 
-    n_cells = len(cells)
-    n_cols  = 5
-    n_rows  = (n_cells + n_cols - 1) // n_cols
+    ax_raw = fig1.add_subplot(gs[0, :])
+    ax_raw.imshow(variant_cells["raw"])
+    ax_raw.set_title("raw", fontsize=10, fontweight="bold")
+    ax_raw.set_xticks([]); ax_raw.set_yticks([])
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 3 * n_rows))
-    axes_flat = axes.flatten()
+    for col, (label, key) in enumerate([("V1 base", "V1 base"), ("V2 full snow", "V2 full snow")]):
+        ax = fig1.add_subplot(gs[1, col])
+        ax.imshow(variant_cells[key])
+        ax.set_title(label, fontsize=10, fontweight="bold")
+        ax.set_xticks([]); ax.set_yticks([])
 
-    for ax, (label, img) in zip(axes_flat, cells):
-        ax.imshow(img)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_title(label, fontsize=9, fontweight="bold")
+    for col, (label, key) in enumerate([("V3 train (light)", "V3 train (light)"), ("V3 test (heavy)", "V3 test (heavy)")]):
+        ax = fig1.add_subplot(gs[2, col])
+        ax.imshow(variant_cells[key])
+        ax.set_title(label, fontsize=10, fontweight="bold")
+        ax.set_xticks([]); ax.set_yticks([])
 
-    for ax in axes_flat[len(cells):]:
-        ax.axis("off")
+    fig1.suptitle(f"Variants: raw, V1, V2, V3\nsample: {sample_path.stem}", fontsize=12, fontweight="bold")
+    AV.save_figure(fig1, samples_dir / "comparison_variants.png")
+    print(f"Saved -> {samples_dir / 'comparison_variants.png'}")
 
-    out_path = samples_dir / "comparison.png"
-    fig.suptitle(f"Top row: variants (raw, V1, V2, V3 train, V3 test).  "
-                 f"Lower rows: each transform alone (p=1.0).\nsample: {sample_path.stem}",
-                 fontsize=12, fontweight="bold")
-    fig.tight_layout()
-    fig.savefig(str(out_path), dpi=110, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved comparison grid -> {out_path}")
+    # Image 2: individual transforms (each at p=1.0)
+    individual_cells = [
+        (name, apply_and_visualize(image, bboxes, class_labels, p))
+        for name, p in single_pipelines.items()]
+
+    fig2 = AV.comparison_grid(
+        individual_cells,
+        suptitle=f"Individual transforms (p=1.0)\nsample: {sample_path.stem}",
+        cols=5, cell_size=(4, 3),
+    )
+    AV.save_figure(fig2, samples_dir / "comparison_transforms.png")
+    print(f"Saved -> {samples_dir / 'comparison_transforms.png'}")
