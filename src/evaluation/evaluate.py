@@ -158,32 +158,39 @@ class Evaluator:
         return (end - start) / n_iter * 1000
 
     @staticmethod
-    def compare_all() -> None:
-        """Compare V1, V2, and V3 side-by-side in one table."""
-        e1 = Evaluator("v1")
-        e2 = Evaluator("v2")
-        e3 = Evaluator("v3_ds")
+    def compare_all(variants: list[str] | None = None) -> None:
+        """Compare all variants side-by-side. Skips missing checkpoints gracefully."""
+        if variants is None:
+            variants = ["v0", "v1", "v2", "v3_ds"]
 
-        m1, m2, m3 = e1.run(), e2.run(), e3.run()
+        evaluators = {}
+        for v in variants:
+            try:
+                evaluators[v] = Evaluator(v)
+            except FileNotFoundError as e:
+                print(f"[compare_all] skipping {v}: {e}")
 
-        print(f"\n{'='*85}")
-        print(f"  {'Metric':<20} {'V1 BASE':>12} {'V2 AUG':>12} {'V3 DS':>12} {'V2 vs V3 Δ':>12}")
-        print(f"{'='*85}")
+        if not evaluators:
+            print("[compare_all] No variants available to compare.")
+            return
 
-        keys = ["mAP50", "mAP75", "mAP50_95", "precision", "recall", "f1", "inference_ms"]
+        results = {v: e.run() for v, e in evaluators.items()}
+        keys    = ["mAP50", "mAP75", "mAP50_95", "precision", "recall", "f1", "inference_ms"]
+        col_w   = 13
+        width   = 20 + col_w * len(evaluators) + 2
+
+        print(f"\n{'=' * width}")
+        print(f"  {'Metric':<20}" + "".join(f"{v.upper():>{col_w}}" for v in evaluators))
+        print(f"{'=' * width}")
         for key in keys:
-            v1, v2, v3 = m1[key], m2[key], m3[key]
-            if v1 is None or v2 is None or v3 is None:
-                print(f"  {key:<20} {'N/A':>12} {'N/A':>12} {'N/A':>12} {'N/A':>12}")
-                continue
-            diff = v3 - v2
-            sign = "+" if diff >= 0 else ""
-            print(f"  {key:<20} {v1:>12.4f} {v2:>12.4f} {v3:>12.4f} {sign+f'{diff:.4f}':>12}")
+            row = f"  {key:<20}"
+            for v in evaluators:
+                val = results[v].get(key)
+                row += f"{('N/A' if val is None else f'{val:.4f}'):>{col_w}}"
+            print(row)
+        print(f"{'=' * width}")
 
-        print(f"{'='*85}")
-
-        # WandB comparison table
-        cfg = e1.cfg
+        cfg = next(iter(evaluators.values())).cfg
         if not getattr(cfg.logging, "wandb_project", None):
             return
         try:
@@ -198,6 +205,7 @@ class Evaluator:
             dir      = str(cfg.paths.wandb_dir),
             reinit   = True,
         )
-        rows = [[k, m1.get(k), m2.get(k), m3.get(k)] for k in keys]
-        wandb.log({"comparison": wandb.Table(columns=["metric", "v1", "v2", "v3_ds"], data=rows)})
+        columns = ["metric"] + list(evaluators.keys())
+        rows    = [[k] + [results[v].get(k) for v in evaluators] for k in keys]
+        wandb.log({"comparison": wandb.Table(columns=columns, data=rows)})
         wandb.finish()

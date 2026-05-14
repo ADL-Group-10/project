@@ -37,13 +37,6 @@ project:
   
 variants:
   active: v1
-  v0:
-    experiment: v0
-    augmentation:
-      use_snow_aug: false
-      disable: true            # raw data: no Albumentations, no mosaic, no Ultralytics built-in augs
-      standard:
-        mosaic_p: 0.0
   v1:
     experiment: v1
     augmentation:
@@ -141,7 +134,7 @@ augmentation:
       - 220
       p: 0.05
 evaluation:
-  iou_threshold: 0.5
+  iou_threshold: 0.6
   conf_threshold: 0.001
   iou_range:                        # informational; Ultralytics computes mAP[0.5:0.95:0.05] by default
   - 0.5

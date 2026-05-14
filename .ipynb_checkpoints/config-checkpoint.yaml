@@ -6,13 +6,13 @@
 
 
 paths:
-  nvd_root: /project/src/data/NVD
-  yolo_output: /project/outputs/yolo
-  checkpoints_dir: /project/outputs/checkpoints
-  results_dir: /project/outputs/results
-  optuna_db: /project/outputs/optuna/study.db
-  wandb_dir: /project/outputs/wandb
-  log_dir: /project/outputs/logs
+  nvd_root: src/data/NVD
+  yolo_output: outputs/yolo
+  checkpoints_dir: outputs/checkpoints
+  results_dir: outputs/results
+  optuna_db: outputs/optuna/study.db
+  wandb_dir: outputs/wandb
+  log_dir: outputs/logs
   splits:
     train:
     - 2022-12-04 Bjenberg 02
@@ -37,48 +37,58 @@ project:
   
 variants:
   active: v1
+  v0:
+    experiment: v0
+    augmentation:
+      use_snow_aug: false
+      disable: true            # raw data: no Albumentations, no mosaic, no Ultralytics built-in augs
+      standard:
+        mosaic_p: 0.0
   v1:
-    experiment: v1_baseline
-    use_snow_aug: false    
-      
+    experiment: v1
+    augmentation:
+      use_snow_aug: false
   v2:
-    experiment: v2_snow_aug
-    use_snow_aug: true
-
-  v3:
+    experiment: v2
+    augmentation:
+      use_snow_aug: true
+  v3_ds:
     experiment: v3_ds
-    use_snow_aug: true
+    augmentation:
+      use_snow_aug: true
     domain_shift:
-      enabled: true  
+      enabled: true
 
 model:
-  architecture: yolov9
-  weights: yolov9-c.pt
-  yolov9_repo: third_party/yolov9
+  architecture: yolov9              # informational; weights file determines actual arch
+  weights: yolov9c.pt
+  yolov9_repo: third_party/yolov9   # informational; Ultralytics auto-fetches
+  trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
   img_size: 640
   freeze_backbone: false
 
 training:
   epochs: 100
-  batch_size: 16
+  batch_size: 8
   num_workers: 4
+  cache: disk
   optimizer: adam
   lr: 0.004
   lrf: 0.01
-  lr_scheduler: cosine
+  lr_scheduler: cosine              # cosine | linear
   dropout: 0.1
   warmup_epochs: 3
   weight_decay: 0.0005
-  early_stopping_patience: 10
+  early_stopping_patience: 30
   save_every_n_epochs: 10
-  val_every_n_epochs: 5
+  val_every_n_epochs: 1             # validate every N epochs (1 = every epoch)
 loss:
   box_weight: 8.925879806965067
   cls_weight: 0.5
   dfl_weight: 1.5
-  focal_gamma: 0.8993475643167195
-  use_pgi: true
+  focal_gamma: 0.8993475643167195   # not used for Ultralytics; kept for other frameworks
+  use_pgi: true                     # YOLOv9-architecture-internal; no Ultralytics toggle
 augmentation:
   use_snow_aug: false
   standard:
@@ -86,36 +96,54 @@ augmentation:
     hsv_h: 0.015
     hsv_s: 0.7
     hsv_v: 0.4
-    mosaic_p: 0.8
+    mosaic_p: 0.5
   snow:
     desaturation:
       enabled: true
       saturation_limit:
-      - -0.6
-      - -0.2
-      p: 0.6
+      - -0.4
+      - -0.1
+      p: 0.4
     blur:
       enabled: true
       blur_limit:
       - 3
-      - 7
+      - 5
       streak_p: 0.3
-      p: 0.5
+      p: 0.3
     brightness_jitter:
       enabled: true
       brightness_limit:
-      - -0.15
-      - 0.05
-      p: 0.7
+      - -0.10
+      - 0.03
+      p: 0.5
     snow_overlay:
       enabled: true
-      snow_point_lower: 0.1
-      snow_point_upper: 0.3
-      p: 0.4
+      snow_point_lower: 0.15
+      snow_point_upper: 0.35
+      p: 0.85
+    perspective:
+      enabled: true
+      scale:
+      - 0.03
+      - 0.07
+      p: 0.3
+    motion_blur:
+      enabled: true
+      blur_limit:
+      - 3
+      - 7
+      p: 0.3
+    invert:
+      enabled: false
+      threshold:
+      - 128
+      - 220
+      p: 0.05
 evaluation:
   iou_threshold: 0.5
-  conf_threshold: 0.25
-  iou_range:
+  conf_threshold: 0.001
+  iou_range:                        # informational; Ultralytics computes mAP[0.5:0.95:0.05] by default
   - 0.5
   - 0.95
   - 0.05
@@ -124,29 +152,32 @@ evaluation:
   speed_eval_iters: 200
 
 tuning:
-  n_trials: 60
+  targets:
+    lr: training.lr
+    lrf: training.lrf
+    batch_size: training.batch_size
+    warmup_epochs: training.warmup_epochs
+    box_weight: loss.box_weight
+  n_trials: 30
   trial_img_size: 320
+  trial_fraction: 0.5
   timeout_seconds: 7200
-  trial_epochs: 25
+  trial_epochs: 20
   direction: maximize
   metric: val_map50
   pruner: hyperband
   sampler: tpe
-  study_name: nvd-yolov9-hp-v2
+  study_name: nvd-yolov9-hp-v1
   search_space:
     lr:
     - 0.0001
-    - 0.01
+    - 0.005
     batch_size:
+    - 4
     - 8
-    - 16
-    - 32
     box_weight:
     - 5.0
     - 10.0
-    focal_gamma:
-    - 0.5
-    - 2.5
     warmup_epochs:
     - 1
     - 5
@@ -157,9 +188,9 @@ tuning:
 logging:
   wandb_project: nvd-snow-yolov9-optuna
   wandb_entity: ADL-Group-10
-  log_images_every_n_epochs: 5
-  log_grad_norm: true
-  watch_model: false
+  log_images_every_n_epochs: 5      # no-op for Ultralytics (auto-logs val images)
+  log_grad_norm: false              # no-op for Ultralytics (would need batch callback)
+  watch_model: false                # if true, wandb.watch(model) is called
 domain_shift:
   enabled: false
   light_snow:
@@ -167,7 +198,7 @@ domain_shift:
       enabled: true
       saturation_limit:
       - -0.3
-      - -0.1
+      - -0.08
       p: 0.3
     blur:
       enabled: true
@@ -178,35 +209,71 @@ domain_shift:
     brightness_jitter:
       enabled: true
       brightness_limit:
-      - -0.08
-      - 0.03
-      p: 0.3
+      - -0.07
+      - 0.02
+      p: 0.4
     snow_overlay:
       enabled: true
-      snow_point_lower: 0.05
-      snow_point_upper: 0.15
+      snow_point_lower: 0.12
+      snow_point_upper: 0.25
+      p: 0.8
+    perspective:
+      enabled: true
+      scale:
+      - 0.02
+      - 0.04
       p: 0.2
+    motion_blur:
+      enabled: true
+      blur_limit:
+      - 3
+      - 5
+      p: 0.2
+    invert:
+      enabled: false
+      threshold:
+      - 180
+      - 230
+      p: 0.02
   heavy_snow:
     desaturation:
       enabled: true
       saturation_limit:
-      - -0.8
-      - -0.4
-      p: 0.8
+      - -0.6
+      - -0.3
+      p: 0.6
     blur:
+      enabled: true
+      blur_limit:
+      - 3
+      - 7
+      p: 0.5
+    brightness_jitter:
+      enabled: true
+      brightness_limit:
+      - -0.18
+      - -0.03
+      p: 0.6
+    snow_overlay:
+      enabled: true
+      snow_point_lower: 0.30
+      snow_point_upper: 0.55
+      p: 0.95
+    perspective:
+      enabled: true
+      scale:
+      - 0.05
+      - 0.10
+      p: 0.4
+    motion_blur:
       enabled: true
       blur_limit:
       - 5
       - 11
-      p: 0.7
-    brightness_jitter:
-      enabled: true
-      brightness_limit:
-      - -0.25
-      - -0.05
-      p: 0.8
-    snow_overlay:
-      enabled: true
-      snow_point_lower: 0.2
-      snow_point_upper: 0.5
-      p: 0.6
+      p: 0.4
+    invert:
+      enabled: false
+      threshold:
+      - 100
+      - 200
+      p: 0.10

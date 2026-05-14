@@ -29,7 +29,7 @@ echo "================================================================"
 echo "=== $(date) Pipeline started"
 echo "================================================================"
 
-# ── Resume-or-fresh detection ────────────────────────────────────
+# Resume-or-fresh detection
 MARKER_DIR="outputs/.pipeline_markers"
 RUNNING="$MARKER_DIR/in_progress"
 mkdir -p "$MARKER_DIR"
@@ -63,7 +63,7 @@ step() {
     touch "$marker"
 }
 
-# ── Environment header ───────────────────────────────────────────
+# Environment header
 echo
 echo "=== Environment ==="
 echo "Host:       $(hostname)"
@@ -81,16 +81,30 @@ pip show ultralytics torch optuna wandb albumentations 2>/dev/null \
     | grep -E "^(Name|Version)" \
     | paste - -
 
-# ── Pipeline steps (each idempotent via _done marker) ────────────
+# Smoke test the process
+SMOKE=0
+if [[ "${1:-}" == "--smoke" ]]; then
+    SMOKE=1
+    echo "=== SMOKE MODE — short epochs, 1 Optuna trial ==="
+fi
+
+EPOCHS_OVERRIDE=""
+TUNE_OVERRIDE=""
+if [[ $SMOKE -eq 1 ]]; then
+    EPOCHS_OVERRIDE="--epochs 2"
+    TUNE_OVERRIDE="--n-trials 1 --trial-epochs 2 --no-write"
+fi
+
+# Pipeline steps (each idempotent via _done marker)
 step data   python -m src.data.data_pipeline
-step tune   python -m src.tuning.run_tuning
-step v0     python -m src.model.run_train --variant v0
-step v1     python -m src.model.run_train --variant v1
-step v2     python -m src.model.run_train --variant v2
-step v3_ds  python -m src.model.run_train --variant v3_ds
+step v0     python -m src.model.run_train --variant v0  ${EPOCHS_OVERRIDE:-}
+step tune   python -m src.tuning.run_tuning              ${TUNE_OVERRIDE:-}
+step v1     python -m src.model.run_train --variant v1  ${EPOCHS_OVERRIDE:-}
+step v2     python -m src.model.run_train --variant v2  ${EPOCHS_OVERRIDE:-}
+step v3_ds  python -m src.model.run_train --variant v3_ds ${EPOCHS_OVERRIDE:-}
 step eval   python -c "from src.evaluation.evaluate import Evaluator; Evaluator.compare_all()"
 
-# ── Success: wipe all markers so next launch is fresh ────────────
+# Success: wipe all markers so next launch is fresh
 rm -rf "$MARKER_DIR"
 
 echo

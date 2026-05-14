@@ -42,7 +42,7 @@ class UltralyticsTrainer:
         self.model  = YOLO(cfg.model.weights)
         print(f"[trainer] {cfg.model.weights} loaded on {self.device}")
 
-        pipeline     = DataPipeline("config.yaml", variant=str(cfg.experiment))
+        pipeline     = DataPipeline("config.yaml", variant=str(cfg.variants.active))
         dataset_path, self._aug = pipeline.run()
         self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
 
@@ -103,7 +103,7 @@ class UltralyticsTrainer:
             hsv_h         = 0.0,
             hsv_s         = 0.0,
             hsv_v         = 0.0,
-            mosaic        = float(self.cfg.augmentation.standard.mosaic_p),
+            mosaic = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(self.cfg.augmentation.standard.mosaic_p),
 
             # --- OUTPUT ---
             project       = str(self.results_dir.resolve()),
