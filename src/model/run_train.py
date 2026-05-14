@@ -23,7 +23,7 @@ def run(variant: str = "v1", epochs: int | None = None) -> None:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run full training for the given variant.")
-    p.add_argument("--variant", default="v1", choices=["v1", "v2", "v3_ds"])
+    p.add_argument("--variant", default="v1", choices=["v0", "v1", "v2", "v3_ds"])
     p.add_argument("--epochs", type=int, default=None,
                    help="Override cfg.training.epochs (useful for sanity runs)")
     return p.parse_args()

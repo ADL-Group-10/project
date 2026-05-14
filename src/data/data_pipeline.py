@@ -16,9 +16,11 @@ class DataPipeline:
     """Single entry point for NVD dataset preparation.
 
     Usage:
-        pipeline = DataPipeline()
-        path, aug = pipeline.run(augment="snow")                    # single pipeline
-        path, augs = pipeline.run(augment="snow", domain_shift=True) # per-split pipelines
+        pipeline = DataPipeline()                                # variant from config.yaml
+        pipeline = DataPipeline(variant="v0")                    # explicit variant
+        path, aug = pipeline.run()                               # augment derived from variant
+        path, aug = pipeline.run(augment="snow")                 # explicit override
+        path, augs = pipeline.run(domain_shift=True)             # per-split pipelines
     """
 
     def __init__(self, config_path: str = "config.yaml", variant: str | None = None) -> None:
@@ -38,12 +40,22 @@ class DataPipeline:
 
     # ── Public ─────────────────────────────────────────────────
 
-    def run(self, augment: str = "none", domain_shift: bool = False):
+    def run(self, augment: str | None = None, domain_shift: bool | None = None):
         """Build augmentation pipeline(s).
+
+        Args:
+            augment:      "none" | "base" | "snow". If None, derived from the active variant
+                          in config (v0 → "none", v1 → "base", v2/v3_ds → "snow").
+            domain_shift: If None, derived from cfg.domain_shift.enabled.
 
         Returns:
             (output_dir, pipeline) or (output_dir, {"train": ..., "val": ..., "test": ...})
         """
+        if augment is None:
+            augment = self._augment_from_cfg()
+        if domain_shift is None:
+            domain_shift = bool(getattr(self.config.domain_shift, "enabled", False))
+
         if augment not in ("none", "base", "snow"):
             raise ValueError(f"augment must be 'none', 'base', or 'snow', got '{augment}'")
 
@@ -76,6 +88,14 @@ class DataPipeline:
         return stats
 
     # ── Private ────────────────────────────────────────────────
+
+    def _augment_from_cfg(self) -> str:
+        """Map the active variant's augmentation block to a mode string."""
+        if bool(getattr(self.aug_config, "disable", False)):
+            return "none"
+        if bool(self.aug_config.use_snow_aug):
+            return "snow"
+        return "base"
 
     def _build_pipeline(self, augment: str, snow_config=None) -> A.Compose:
         transforms = []

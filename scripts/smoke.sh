@@ -1,5 +1,5 @@
 #!/bin/bash
-# 3-epoch smoke test for all four modules: tuning, train v1, train v2, train v3_ds.
+# 3-epoch smoke test for all five modules: tuning, train v0, train v1, train v2, train v3_ds.
 # Verifies the augmentation Compose patch lands and every code path executes.
 # Run on cluster after pulling latest code.
 #
@@ -40,13 +40,17 @@ pip show ultralytics torch optuna wandb albumentations 2>/dev/null \
 echo
 echo "=== $(date) Cleanup smoke artifacts ==="
 rm -rf runs/ \
-       outputs/results/v1 outputs/results/v2 outputs/results/v3_ds \
+       outputs/results/v0 outputs/results/v1 outputs/results/v2 outputs/results/v3_ds \
        outputs/optuna/study.db \
        outputs/optuna_trials/
 
 echo
 echo "=== $(date) Tuning smoke (1 trial × 3 epochs, --no-write) ==="
 python -m src.tuning.run_tuning --n-trials 1 --trial-epochs 3 --no-write
+
+echo
+echo "=== $(date) Train v0 smoke (3 epochs, raw data, no aug) ==="
+python -m src.model.run_train --variant v0 --epochs 3
 
 echo
 echo "=== $(date) Train v1 smoke (3 epochs) ==="

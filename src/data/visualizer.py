@@ -189,7 +189,7 @@ class AnnotationVisualizer:
     @staticmethod
     def comparison_grid(cells: list[tuple[str, np.ndarray]],
                         suptitle: str = "", cols: int = 5,
-                        cell_size: tuple = (4, 3), dpi: int = 110):
+                        cell_size: tuple = (4, 3)):
         """Arrange (label, image) pairs into a grid. Returns matplotlib Figure."""
         import matplotlib.pyplot as plt
 
@@ -198,7 +198,7 @@ class AnnotationVisualizer:
         fig, axes = plt.subplots(rows, cols,
                                  figsize=(cell_size[0] * cols,
                                           cell_size[1] * rows))
-        axes_flat = axes.flatten() if n > 1 else [axes]
+        axes_flat = np.array(axes).flatten()
 
         for ax, (label, img) in zip(axes_flat, cells):
             ax.imshow(img)

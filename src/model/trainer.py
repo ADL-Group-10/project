@@ -42,10 +42,8 @@ class UltralyticsTrainer:
         self.model  = YOLO(cfg.model.weights)
         print(f"[trainer] {cfg.model.weights} loaded on {self.device}")
 
-        augment      = "snow" if cfg.augmentation.use_snow_aug else "base"
-        domain_shift = bool(getattr(cfg.domain_shift, "enabled", False))
-        pipeline     = DataPipeline("config.yaml")
-        dataset_path, self._aug = pipeline.run(augment=augment, domain_shift=domain_shift)
+        pipeline     = DataPipeline("config.yaml", variant=str(cfg.experiment))
+        dataset_path, self._aug = pipeline.run()
         self.dataset_yaml = str((dataset_path / "dataset.yaml").resolve())
 
         self.results_dir = Path(cfg.paths.results_dir)
@@ -65,6 +63,8 @@ class UltralyticsTrainer:
         self._attach_watch_model()
         self._attach_cfg_snapshot()
         self._attach_cache_clear()
+
+        extra_aug_kwargs = self._raw_data_aug_overrides() if bool(getattr(self.cfg.augmentation, "disable", False)) else {}
 
         self.model.train(
             # --- DATA & HARDWARE ---
@@ -111,6 +111,8 @@ class UltralyticsTrainer:
             verbose       = True,
             exist_ok      = True,
             plots         = True,
+
+            **extra_aug_kwargs,
         )
         print(f"[trainer] Done. Best model: {self.results_dir.resolve()}/{name}/weights/best.pt")
 
@@ -191,6 +193,14 @@ class UltralyticsTrainer:
         return metrics["mAP50"]
 
     # ── Private ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _raw_data_aug_overrides() -> dict:
+        """Disable every Ultralytics built-in augmentation for v0 (raw data)."""
+        return dict(
+            degrees=0.0, translate=0.0, scale=0.0, shear=0.0, perspective=0.0,
+            flipud=0.0, mixup=0.0, copy_paste=0.0, erasing=0.0, auto_augment=None,
+        )
 
     def _compose_for(self, split: str):
         """Return the Albumentations Compose for a given split, or None."""

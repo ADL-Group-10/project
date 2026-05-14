@@ -37,6 +37,13 @@ project:
   
 variants:
   active: v1
+  v0:
+    experiment: v0
+    augmentation:
+      use_snow_aug: false
+      disable: true            # raw data: no Albumentations, no mosaic, no Ultralytics built-in augs
+      standard:
+        mosaic_p: 0.0
   v1:
     experiment: v1
     augmentation:

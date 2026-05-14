@@ -77,6 +77,68 @@ class Evaluator:
                     wandb.log({f"plots/{img.stem}": wandb.Image(str(img))})
         wandb.finish()
 
+    def visualize_predictions(self,
+                              num_samples: int = 4,
+                              conf: float = 0.25,
+                              save_dir: str | None = None,
+                              seed: int = 42,
+                              show_gt: bool = True) -> Path:
+        """Run inference on N random test images and save a (GT, Pred) grid.
+
+        Reuses AnnotationVisualizer.visualize() for box drawing + zoom insets,
+        and AV.comparison_grid() / AV.save_figure() for layout and output.
+        Predictions drawn in red, ground truth in green.
+
+        Returns:
+            Path to the saved PNG.
+        """
+        import random
+        import cv2
+        from src.data.visualizer import AnnotationVisualizer as AV
+
+        img_dir = Path(self.cfg.paths.yolo_output) / "images" / "test"
+        lbl_dir = Path(self.cfg.paths.yolo_output) / "labels" / "test"
+        images = sorted(img_dir.glob("*.png"))
+        if not images:
+            raise FileNotFoundError(f"No test images in {img_dir}")
+
+        samples = random.Random(seed).sample(images, min(num_samples, len(images)))
+
+        out_dir = Path(save_dir) if save_dir else Path(self.cfg.paths.results_dir) / self.variant
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        GREEN, RED = (0, 255, 0), (255, 0, 0)
+        cells = []
+        for img_path in samples:
+            img = cv2.cvtColor(cv2.imread(str(img_path)), cv2.COLOR_BGR2RGB)
+
+            result = self.model.predict(str(img_path), conf=conf, verbose=False)[0]
+            pred_boxes = result.boxes.xywhn.cpu().numpy().tolist()
+
+            gt_boxes: list = []
+            if show_gt:
+                lbl_path = lbl_dir / (img_path.stem + ".txt")
+                if lbl_path.exists():
+                    for line in lbl_path.read_text().splitlines():
+                        parts = line.strip().split()
+                        if len(parts) == 5:
+                            gt_boxes.append([float(v) for v in parts[1:]])
+                cells.append((f"{img_path.stem}\nGT ({len(gt_boxes)})",
+                              AV.visualize(img, gt_boxes, color=GREEN)))
+            cells.append((f"{img_path.stem}\nPred ({len(pred_boxes)})",
+                          AV.visualize(img, pred_boxes, color=RED)))
+
+        fig = AV.comparison_grid(
+            cells,
+            suptitle=f"{self.variant} predictions on test (conf ≥ {conf})",
+            cols=2 if show_gt else 1,
+            cell_size=(7, 4),
+        )
+        out_path = out_dir / f"predictions_{self.variant}.png"
+        AV.save_figure(fig, out_path)
+        print(f"[evaluator] Saved {out_path}")
+        return out_path
+
     def _measure_speed(self) -> float:
         ev     = self.cfg.evaluation
         device = torch.device(get_device_str(self.cfg))

@@ -40,7 +40,7 @@ if [[ -f "$RUNNING" ]]; then
 else
     echo "=== Fresh run — cleaning previous artifacts."
     rm -rf runs/ \
-           outputs/results/v1 outputs/results/v2 outputs/results/v3_ds \
+           outputs/results/v0 outputs/results/v1 outputs/results/v2 outputs/results/v3_ds \
            outputs/optuna/study.db \
            outputs/optuna_trials/
     rm -f "$MARKER_DIR"/*_done
@@ -84,6 +84,7 @@ pip show ultralytics torch optuna wandb albumentations 2>/dev/null \
 # ── Pipeline steps (each idempotent via _done marker) ────────────
 step data   python -m src.data.data_pipeline
 step tune   python -m src.tuning.run_tuning
+step v0     python -m src.model.run_train --variant v0
 step v1     python -m src.model.run_train --variant v1
 step v2     python -m src.model.run_train --variant v2
 step v3_ds  python -m src.model.run_train --variant v3_ds
@@ -96,5 +97,5 @@ echo
 echo "================================================================"
 echo "=== $(date) Pipeline DONE"
 echo "================================================================"
-echo "Best models: outputs/results/{v1,v2,v3_ds}/weights/best.pt"
+echo "Best models: outputs/results/{v0,v1,v2,v3_ds}/weights/best.pt"
 echo "WandB project: nvd-snow-yolov9-optuna  (group: $WANDB_RUN_GROUP)"
