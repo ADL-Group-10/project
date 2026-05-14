@@ -146,6 +146,12 @@ class DataPipeline:
     def _setup(self) -> None:
         self.logger.info("Setting up YOLO dataset from NVD...")
 
+        # clean any partial or stale dataset before rebuilding
+        import shutil
+        if self.output_dir.exists():
+            shutil.rmtree(self.output_dir)
+            self.logger.info(f"Removed stale dataset at {self.output_dir}")
+        
         for split in ("train", "val", "test"):
             (self.output_dir / "images" / split).mkdir(parents=True, exist_ok=True)
             (self.output_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
