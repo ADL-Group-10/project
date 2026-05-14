@@ -104,6 +104,10 @@ class UltralyticsTrainer:
             hsv_s         = 0.0,
             hsv_v         = 0.0,
             mosaic = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(self.cfg.augmentation.standard.mosaic_p),
+            auto_augment  = None,
+            erasing       = 0.0,
+            scale         = 0.0,
+            translate     = 0.0,
 
             # --- OUTPUT ---
             project       = str(self.results_dir.resolve()),
@@ -179,6 +183,10 @@ class UltralyticsTrainer:
             hsv_s         = 0.0,
             hsv_v         = 0.0,
             mosaic        = float(self.cfg.augmentation.standard.mosaic_p),
+            auto_augment  = None,
+            erasing       = 0.0,
+            scale         = 0.0,
+            translate     = 0.0,
 
             # --- OUTPUT ---
             project       = str((self.results_dir.parent / "optuna_trials").resolve()),
@@ -284,6 +292,7 @@ class UltralyticsTrainer:
             entity  = getattr(self.cfg.logging, "wandb_entity", None),
             name    = name,
             dir     = str(self.cfg.paths.wandb_dir),
+            tags    = [str(self.cfg.variants.active), "smoke" if self.cfg.training.epochs <= 5 else "full"],
             reinit  = True,
         )
 

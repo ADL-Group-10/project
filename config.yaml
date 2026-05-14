@@ -36,7 +36,7 @@ project:
   log_level: INFO
   
 variants:
-  active: v1
+  active: v0
   v0:
     experiment: v0
     augmentation:
@@ -44,20 +44,28 @@ variants:
       disable: true            # raw data: no Albumentations, no mosaic, no Ultralytics built-in augs
       standard:
         mosaic_p: 0.0
+    training:
+      epochs: 100
   v1:
     experiment: v1
     augmentation:
       use_snow_aug: false
+    training:
+      epochs: 100
   v2:
     experiment: v2
     augmentation:
       use_snow_aug: true
+    training:
+      epochs: 150
   v3_ds:
     experiment: v3_ds
     augmentation:
       use_snow_aug: true
     domain_shift:
       enabled: true
+    training:
+      epochs: 150
 
 model:
   architecture: yolov9              # informational; weights file determines actual arch
@@ -70,9 +78,9 @@ model:
 
 training:
   epochs: 100
-  batch_size: 4
+  batch_size: 8
   num_workers: 4
-  cache: false
+  cache: disk
   optimizer: adam
   lr: 0.001
   lrf: 0.01
@@ -80,7 +88,7 @@ training:
   dropout: 0.1
   warmup_epochs: 3
   weight_decay: 0.0005
-  early_stopping_patience: 30
+  early_stopping_patience: 50
   save_every_n_epochs: 10
   val_every_n_epochs: 1             # validate every N epochs (1 = every epoch)
 loss:
@@ -158,11 +166,11 @@ tuning:
     batch_size: training.batch_size
     box_weight: loss.box_weight
     warmup_epochs: training.warmup_epochs
-  n_trials: 30
-  trial_img_size: 320
-  trial_fraction: 0.5
+  n_trials: 15
+  trial_img_size: 640
+  trial_fraction: 0.3
   timeout_seconds: 7200
-  trial_epochs: 20
+  trial_epochs: 15
   direction: maximize
   metric: val_map50
   pruner: hyperband
@@ -173,8 +181,8 @@ tuning:
     - 0.0001
     - 0.005
     batch_size:
-    - 4
-    - 4
+    - 8
+    - 8
     box_weight:
     - 5.0
     - 10.0
