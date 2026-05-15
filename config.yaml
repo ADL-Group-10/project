@@ -27,22 +27,28 @@ project:
   device: cuda:0
   log_level: INFO
 variants:
-  active: v0
+  active: v1
   v0:
-    experiment: v0
+    experiment: v_debug
     augmentation:
       use_snow_aug: false
       disable: true
       standard:
         mosaic_p: 0.0
     training:
-      epochs: 100
+      epochs: 80
+      lr: 0.0003
+      warmup_epochs: 5
+      early_stopping_patience: 0
   v1:
     experiment: v1
     augmentation:
       use_snow_aug: false
     training:
       epochs: 100
+      lr: 0.0003
+      warmup_epochs: 5
+      early_stopping_patience: 30
   v2:
     experiment: v2
     augmentation:
@@ -64,18 +70,18 @@ model:
   trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
   img_size: 640
-  freeze_backbone: true
+  freeze_backbone: false
 training:
   epochs: 100
   batch_size: 8
   num_workers: 4
   cache: disk
   optimizer: adam
-  lr: 0.0001
-  lrf: 0.01
+  lr: 0.00005
+  lrf: 0.1
   lr_scheduler: cosine
   dropout: 0.1
-  warmup_epochs: 5
+  warmup_epochs: 10
   weight_decay: 0.0005
   early_stopping_patience: 50
   save_every_n_epochs: 10
@@ -163,11 +169,11 @@ tuning:
   metric: val_map50
   pruner: hyperband
   sampler: tpe
-  study_name: nvd-yolov9-hp-v1-r2
+  study_name: nvd-yolov9-hp-v1-r3
   search_space:
     lr:
-    - 0.00005
-    - 0.0005
+    - 0.00002
+    - 0.0002
     batch_size:
     - 8
     - 8
@@ -175,8 +181,8 @@ tuning:
     - 5.0
     - 10.0
     warmup_epochs:
-    - 3
-    - 7
+    - 5
+    - 12
     lrf:
     - 0.05
     - 0.2
