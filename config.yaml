@@ -27,28 +27,22 @@ project:
   device: cuda:0
   log_level: INFO
 variants:
-  active: v1
+  active: v0
   v0:
-    experiment: v_debug
+    experiment: v0
     augmentation:
       use_snow_aug: false
       disable: true
       standard:
         mosaic_p: 0.0
     training:
-      epochs: 80
-      lr: 0.0003
-      warmup_epochs: 5
-      early_stopping_patience: 0
+      epochs: 100
   v1:
     experiment: v1
     augmentation:
       use_snow_aug: false
     training:
       epochs: 100
-      lr: 0.0003
-      warmup_epochs: 5
-      early_stopping_patience: 30
   v2:
     experiment: v2
     augmentation:
