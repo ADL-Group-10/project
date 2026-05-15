@@ -103,7 +103,9 @@ class UltralyticsTrainer:
             hsv_h         = 0.0,
             hsv_s         = 0.0,
             hsv_v         = 0.0,
-            mosaic = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(self.cfg.augmentation.standard.mosaic_p),
+            mosaic        = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(self.cfg.augmentation.standard.mosaic_p),
+            degrees       = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(getattr(self.cfg.augmentation.standard, "degrees", 0.0)),
+            perspective   = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(getattr(self.cfg.augmentation.standard, "perspective", 0.0)),
             auto_augment  = None,
             erasing       = 0.0,
             scale         = 0.0,
@@ -187,6 +189,8 @@ class UltralyticsTrainer:
             erasing       = 0.0,
             scale         = 0.0,
             translate     = 0.0,
+            degrees       = float(getattr(self.cfg.augmentation.standard, "degrees", 0.0)),
+            perspective   = float(getattr(self.cfg.augmentation.standard, "perspective", 0.0)),
 
             # --- OUTPUT ---
             project       = str((self.results_dir.parent / "optuna_trials").resolve()),

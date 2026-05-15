@@ -71,11 +71,11 @@ training:
   num_workers: 4
   cache: disk
   optimizer: adam
-  lr: 0.00005
+  lr: 0.0002
   lrf: 0.1
   lr_scheduler: cosine
   dropout: 0.1
-  warmup_epochs: 10
+  warmup_epochs: 5
   weight_decay: 0.0005
   early_stopping_patience: 50
   save_every_n_epochs: 10
@@ -94,6 +94,8 @@ augmentation:
     hsv_s: 0.7
     hsv_v: 0.4
     mosaic_p: 0.5
+    degrees: 15.0
+    perspective: 0.001
   snow:
     desaturation:
       enabled: true
@@ -166,8 +168,8 @@ tuning:
   study_name: nvd-yolov9-hp-v1-r3
   search_space:
     lr:
-    - 0.00002
-    - 0.0002
+    - 0.00005
+    - 0.0005
     batch_size:
     - 8
     - 8
