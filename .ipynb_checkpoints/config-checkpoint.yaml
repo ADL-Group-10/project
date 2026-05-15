@@ -1,10 +1,3 @@
-# Usage:
-#   from src.common_utils import load_config
-#   cfg = load_config()               # uses variants.active below
-#   cfg = load_config(variant="v2")   # runtime override
-# =============================================================================
-
-
 paths:
   nvd_root: src/data/NVD
   yolo_output: outputs/yolo
@@ -27,21 +20,19 @@ paths:
     - 2022-12-02 Asjo 01_stabilized
     heavy_snow:
     - 2022-12-23 Bjenberg 02_stabilized
-
 project:
   name: nvd-snow-yolov9
   group: group-10
   seed: 42
   device: cuda:0
   log_level: INFO
-  
 variants:
   active: v0
   v0:
     experiment: v0
     augmentation:
       use_snow_aug: false
-      disable: true            # raw data: no Albumentations, no mosaic, no Ultralytics built-in augs
+      disable: true
       standard:
         mosaic_p: 0.0
     training:
@@ -66,37 +57,35 @@ variants:
       enabled: true
     training:
       epochs: 150
-
 model:
-  architecture: yolov9              # informational; weights file determines actual arch
+  architecture: yolov9
   weights: yolov9c.pt
-  yolov9_repo: third_party/yolov9   # informational; Ultralytics auto-fetches
+  yolov9_repo: third_party/yolov9
   trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
   img_size: 640
-  freeze_backbone: false
-
+  freeze_backbone: true
 training:
   epochs: 100
   batch_size: 8
   num_workers: 4
   cache: disk
   optimizer: adam
-  lr: 0.001
+  lr: 0.0001
   lrf: 0.01
-  lr_scheduler: cosine              # cosine | linear
+  lr_scheduler: cosine
   dropout: 0.1
-  warmup_epochs: 3
+  warmup_epochs: 5
   weight_decay: 0.0005
   early_stopping_patience: 50
   save_every_n_epochs: 10
-  val_every_n_epochs: 1             # validate every N epochs (1 = every epoch)
+  val_every_n_epochs: 1
 loss:
-  box_weight: 8.925879806965067
+  box_weight: 7.5
   cls_weight: 0.5
   dfl_weight: 1.5
-  focal_gamma: 0.8993475643167195   # not used for Ultralytics; kept for other frameworks
-  use_pgi: true                     # YOLOv9-architecture-internal; no Ultralytics toggle
+  focal_gamma: 0.8993475643167195
+  use_pgi: true
 augmentation:
   use_snow_aug: false
   standard:
@@ -122,7 +111,7 @@ augmentation:
     brightness_jitter:
       enabled: true
       brightness_limit:
-      - -0.10
+      - -0.1
       - 0.03
       p: 0.5
     snow_overlay:
@@ -151,14 +140,13 @@ augmentation:
 evaluation:
   iou_threshold: 0.5
   conf_threshold: 0.001
-  iou_range:                        # informational; Ultralytics computes mAP[0.5:0.95:0.05] by default
+  iou_range:
   - 0.5
   - 0.95
   - 0.05
   measure_inference_speed: true
   speed_warmup_iters: 50
   speed_eval_iters: 200
-
 tuning:
   targets:
     lr: training.lr
@@ -175,11 +163,11 @@ tuning:
   metric: val_map50
   pruner: hyperband
   sampler: tpe
-  study_name: nvd-yolov9-hp-v1
+  study_name: nvd-yolov9-hp-v1-r2
   search_space:
     lr:
-    - 0.0001
-    - 0.005
+    - 0.00005
+    - 0.0005
     batch_size:
     - 8
     - 8
@@ -187,18 +175,17 @@ tuning:
     - 5.0
     - 10.0
     warmup_epochs:
-    - 1
-    - 5
+    - 3
+    - 7
     lrf:
-    - 0.001
-    - 0.1
-    
+    - 0.05
+    - 0.2
 logging:
   wandb_project: nvd-snow-yolov9-optuna
   wandb_entity: ADL-Group-10
-  log_images_every_n_epochs: 5      # no-op for Ultralytics (auto-logs val images)
-  log_grad_norm: false              # no-op for Ultralytics (would need batch callback)
-  watch_model: false                # if true, wandb.watch(model) is called
+  log_images_every_n_epochs: 5
+  log_grad_norm: false
+  watch_model: false
 domain_shift:
   enabled: false
   light_snow:
@@ -264,14 +251,14 @@ domain_shift:
       p: 0.6
     snow_overlay:
       enabled: true
-      snow_point_lower: 0.30
+      snow_point_lower: 0.3
       snow_point_upper: 0.55
       p: 0.95
     perspective:
       enabled: true
       scale:
       - 0.05
-      - 0.10
+      - 0.1
       p: 0.4
     motion_blur:
       enabled: true
@@ -284,4 +271,4 @@ domain_shift:
       threshold:
       - 100
       - 200
-      p: 0.10
+      p: 0.1
