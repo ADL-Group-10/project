@@ -210,7 +210,7 @@ class UltralyticsTrainer:
     def _raw_data_aug_overrides() -> dict:
         """Disable every Ultralytics built-in augmentation for v0 (raw data)."""
         return dict(
-            degrees=0.0, shear=0.0, perspective=0.0,
+            shear=0.0,
             flipud=0.0, mixup=0.0, copy_paste=0.0,
         )
 
