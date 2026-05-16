@@ -29,7 +29,7 @@ project:
 variants:
   active: v0
   v0:
-    experiment: v0
+    experiment: v0_1280
     augmentation:
       use_snow_aug: false
       disable: true
@@ -38,25 +38,25 @@ variants:
     training:
       epochs: 100
   v1:
-    experiment: v1_tuned
+    experiment: v1_1280
     augmentation:
       use_snow_aug: false
     training:
       epochs: 100
   v2:
-    experiment: v2
+    experiment: v2_1280
     augmentation:
       use_snow_aug: true
     training:
-      epochs: 150
+      epochs: 100
   v3_ds:
-    experiment: v3_ds
+    experiment: v3_ds_1280
     augmentation:
       use_snow_aug: true
     domain_shift:
       enabled: true
     training:
-      epochs: 150
+      epochs: 100
 model:
   architecture: yolov9
   weights: yolov9c.pt
