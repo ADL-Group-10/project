@@ -64,6 +64,8 @@ class UltralyticsTrainer:
         self._attach_cfg_snapshot()
         self._attach_cache_clear()
 
+        extra_aug_kwargs = self._raw_data_aug_overrides() if bool(getattr(self.cfg.augmentation, "disable", False)) else {}
+
         self.model.train(
             # --- DATA & HARDWARE ---
             data          = self.dataset_yaml,
@@ -98,20 +100,16 @@ class UltralyticsTrainer:
 
             # --- AUGMENTATION (cfg-driven; our Compose owns flip+HSV, so disable Ultralytics' built-ins) ---
             fliplr        = 0.0,
-            flipud        = 0.0,
             hsv_h         = 0.0,
             hsv_s         = 0.0,
             hsv_v         = 0.0,
             mosaic        = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(self.cfg.augmentation.standard.mosaic_p),
             degrees       = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(getattr(self.cfg.augmentation.standard, "degrees", 0.0)),
             perspective   = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(getattr(self.cfg.augmentation.standard, "perspective", 0.0)),
-            translate     = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else 0.1,
             auto_augment  = None,
             erasing       = 0.0,
             scale         = 0.0,
-            mixup         = 0.0,
-            copy_paste    = 0.0,
-            shear         = 0.0,
+            translate     = 0.0,
 
             # --- OUTPUT ---
             project       = str(self.results_dir.resolve()),
@@ -119,6 +117,8 @@ class UltralyticsTrainer:
             verbose       = True,
             exist_ok      = True,
             plots         = True,
+
+            **extra_aug_kwargs,
         )
         print(f"[trainer] Done. Best model: {self.results_dir.resolve()}/{name}/weights/best.pt")
 
@@ -181,20 +181,16 @@ class UltralyticsTrainer:
 
             # --- AUGMENTATION (cfg-driven; our Compose owns flip+HSV) ---
             fliplr        = 0.0,
-            flipud        = 0.0,
             hsv_h         = 0.0,
             hsv_s         = 0.0,
             hsv_v         = 0.0,
-            mosaic        = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(self.cfg.augmentation.standard.mosaic_p),
-            degrees       = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(getattr(self.cfg.augmentation.standard, "degrees", 0.0)),
-            perspective   = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else float(getattr(self.cfg.augmentation.standard, "perspective", 0.0)),
-            translate     = 0.0 if bool(getattr(self.cfg.augmentation, "disable", False)) else 0.1,
+            mosaic        = float(self.cfg.augmentation.standard.mosaic_p),
             auto_augment  = None,
             erasing       = 0.0,
             scale         = 0.0,
-            mixup         = 0.0,
-            copy_paste    = 0.0,
-            shear         = 0.0,
+            translate     = 0.0,
+            degrees       = float(getattr(self.cfg.augmentation.standard, "degrees", 0.0)),
+            perspective   = float(getattr(self.cfg.augmentation.standard, "perspective", 0.0)),
 
             # --- OUTPUT ---
             project       = str((self.results_dir.parent / "optuna_trials").resolve()),

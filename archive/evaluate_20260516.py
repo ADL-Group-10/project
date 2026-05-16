@@ -14,12 +14,11 @@ class Evaluator:
         self.cfg = load_config(variant=variant)
 
         results_dir = Path(self.cfg.paths.results_dir)
-        experiment_name = str(self.cfg.experiment)
-        weights = results_dir / experiment_name / "weights" / "best.pt"
+        weights = results_dir / self.variant / "weights" / "best.pt"
         if not weights.exists():
             available = [d.name for d in results_dir.iterdir() if d.is_dir()]
             raise FileNotFoundError(
-                f"Weights for {self.variant} (experiment={experiment_name}) missing at {weights}.\n"
+                f"Weights for {self.variant} missing at {weights}.\n"
                 f"Found these folders instead: {available}"
             )
 
@@ -152,11 +151,9 @@ class Evaluator:
         with torch.no_grad():
             for _ in range(warmup):
                 model(dummy)
-            torch.cuda.synchronize()
             start = time.perf_counter()
             for _ in range(n_iter):
                 model(dummy)
-            torch.cuda.synchronize()
             end = time.perf_counter()
         return (end - start) / n_iter * 1000
 

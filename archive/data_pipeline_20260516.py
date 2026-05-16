@@ -140,7 +140,6 @@ class DataPipeline:
                 format="yolo",
                 label_fields=["class_labels"],
                 min_visibility=0.3,
-                clip=True,
             ),
         )
 
@@ -460,7 +459,6 @@ if __name__ == "__main__":
                 format="yolo",
                 label_fields=["class_labels"],
                 min_visibility=0.3,
-                clip=True,
             ),
         )
 

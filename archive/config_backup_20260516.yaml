@@ -38,7 +38,7 @@ variants:
     training:
       epochs: 100
   v1:
-    experiment: v1
+    experiment: v1_e
     augmentation:
       use_snow_aug: false
     training:
@@ -63,7 +63,7 @@ model:
   yolov9_repo: third_party/yolov9
   trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
-  img_size: 1280
+  img_size: 640
   freeze_backbone: false
 training:
   epochs: 100
@@ -94,7 +94,7 @@ augmentation:
     hsv_s: 0.7
     hsv_v: 0.4
     mosaic_p: 0.5
-    degrees: 0.0
+    degrees: 15.0
     perspective: 0.001
   snow:
     desaturation:
@@ -104,10 +104,11 @@ augmentation:
       - -0.1
       p: 0.4
     blur:
-      enabled: false
+      enabled: true
       blur_limit:
       - 3
       - 5
+      streak_p: 0.3
       p: 0.3
     brightness_jitter:
       enabled: true
@@ -119,19 +120,25 @@ augmentation:
       enabled: true
       snow_point_lower: 0.15
       snow_point_upper: 0.35
-      p: 0.5
+      p: 0.85
     perspective:
-      enabled: false
+      enabled: true
       scale:
       - 0.03
       - 0.07
       p: 0.3
     motion_blur:
-      enabled: false
+      enabled: true
       blur_limit:
       - 3
       - 7
       p: 0.3
+    invert:
+      enabled: false
+      threshold:
+      - 128
+      - 220
+      p: 0.05
 evaluation:
   iou_threshold: 0.5
   conf_threshold: 0.001
@@ -191,7 +198,7 @@ domain_shift:
       - -0.08
       p: 0.3
     blur:
-      enabled: false
+      enabled: true
       blur_limit:
       - 3
       - 5
@@ -206,19 +213,25 @@ domain_shift:
       enabled: true
       snow_point_lower: 0.12
       snow_point_upper: 0.25
-      p: 0.5
+      p: 0.8
     perspective:
-      enabled: false
+      enabled: true
       scale:
       - 0.02
       - 0.04
       p: 0.2
     motion_blur:
-      enabled: false
+      enabled: true
       blur_limit:
       - 3
       - 5
       p: 0.2
+    invert:
+      enabled: false
+      threshold:
+      - 180
+      - 230
+      p: 0.02
   heavy_snow:
     desaturation:
       enabled: true
@@ -227,7 +240,7 @@ domain_shift:
       - -0.3
       p: 0.6
     blur:
-      enabled: false
+      enabled: true
       blur_limit:
       - 3
       - 7
@@ -242,16 +255,22 @@ domain_shift:
       enabled: true
       snow_point_lower: 0.3
       snow_point_upper: 0.55
-      p: 0.7
+      p: 0.95
     perspective:
-      enabled: false
+      enabled: true
       scale:
       - 0.05
       - 0.1
       p: 0.4
     motion_blur:
-      enabled: false
+      enabled: true
       blur_limit:
       - 5
       - 11
       p: 0.4
+    invert:
+      enabled: false
+      threshold:
+      - 100
+      - 200
+      p: 0.1
