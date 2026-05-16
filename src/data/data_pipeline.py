@@ -495,9 +495,6 @@ if __name__ == "__main__":
                                 snow_cfg["snow_overlay"]["snow_point_upper"]), p=1.0),
         "motion_blur":  A.MotionBlur(
                             blur_limit=tuple(snow_cfg["motion_blur"]["blur_limit"]), p=1.0),
-        "invert":       A.Solarize(
-                            threshold_range=tuple(
-                                t / 255.0 for t in snow_cfg["invert"]["threshold"]), p=1.0),
     }
     single_pipelines = {name: wrap_single(t) for name, t in singles.items()}
 
