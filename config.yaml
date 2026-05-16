@@ -38,7 +38,7 @@ variants:
     training:
       epochs: 100
   v1:
-    experiment: v1
+    experiment: v1_tuned
     augmentation:
       use_snow_aug: false
     training:
@@ -59,7 +59,7 @@ variants:
       epochs: 150
 model:
   architecture: yolov9
-  weights: yolov9e.pt
+  weights: yolov9c.pt
   yolov9_repo: third_party/yolov9
   trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
@@ -74,7 +74,7 @@ training:
   lr: 0.0002
   lrf: 0.1
   lr_scheduler: cosine
-  dropout: 0.1
+  dropout: 0.0
   warmup_epochs: 5
   weight_decay: 0.0005
   early_stopping_patience: 50

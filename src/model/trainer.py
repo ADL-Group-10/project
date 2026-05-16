@@ -49,7 +49,7 @@ class UltralyticsTrainer:
         self.results_dir = Path(cfg.paths.results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
-    def train(self, name: str | None = None) -> None:
+    def train(self, name: str | None = None, resume: bool = False) -> None:
         """Full training run."""
         name = name or str(self.cfg.experiment)
         t  = self.cfg.training
@@ -118,6 +118,7 @@ class UltralyticsTrainer:
             name          = name,
             verbose       = True,
             exist_ok      = True,
+            resume        = resume,
             plots         = True,
         )
         print(f"[trainer] Done. Best model: {self.results_dir.resolve()}/{name}/weights/best.pt")
@@ -201,6 +202,7 @@ class UltralyticsTrainer:
             name          = f"trial_{trial_number}",
             verbose       = False,
             exist_ok      = True,
+            resume        = resume,
             plots         = True,
         )
 
