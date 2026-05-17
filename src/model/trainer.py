@@ -138,7 +138,7 @@ class UltralyticsTrainer:
             "recall":    metrics.box.mr,
         }
 
-    def train_one_trial(self, trial_number: int = 0) -> float:
+    def train_one_trial(self, trial_number: int = 0, resume: bool = False) -> float:
         """
         Optuna trial. HPs are read from self.cfg — the tuner overlays
         suggested values via apply_hp_to_config before instantiating us.
