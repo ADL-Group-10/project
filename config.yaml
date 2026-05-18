@@ -38,7 +38,7 @@ variants:
     training:
       epochs: 100
   v1:
-    experiment: v1_1280
+    experiment: v1_e_1280
     augmentation:
       use_snow_aug: false
     training:
@@ -59,7 +59,7 @@ variants:
       epochs: 100
 model:
   architecture: yolov9
-  weights: yolov9c.pt
+  weights: yolov9e.pt
   yolov9_repo: third_party/yolov9
   trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
@@ -67,21 +67,21 @@ model:
   freeze_backbone: false
 training:
   epochs: 100
-  batch_size: 4
+  batch_size: 8
   num_workers: 4
   cache: disk
   optimizer: adam
-  lr: 0.0002
-  lrf: 0.1
+  lr: 0.00010082860845904296
+  lrf: 0.06465081710095759
   lr_scheduler: cosine
   dropout: 0.0
-  warmup_epochs: 5
+  warmup_epochs: 8
   weight_decay: 0.0005
   early_stopping_patience: 50
   save_every_n_epochs: 10
   val_every_n_epochs: 1
 loss:
-  box_weight: 7.5
+  box_weight: 5.610191174223894
   cls_weight: 0.5
   dfl_weight: 1.5
   focal_gamma: 0.8993475643167195
