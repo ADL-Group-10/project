@@ -59,7 +59,7 @@ variants:
       epochs: 100
 model:
   architecture: yolov9
-  weights: yolov9e.pt
+  weights: yolov9c.pt
   yolov9_repo: third_party/yolov9
   trainer_class: src.model.trainer.UltralyticsTrainer
   num_classes: 1
