@@ -37,9 +37,7 @@ Thumbs.db
 .env
 *.env
 
-# Claude
-CLAUDE.md
-DATA_PIPELINE_DESIGN_LOG.md
+# Model weights / runs
 *.pt
 notebooks/wandb/
 wandb/
