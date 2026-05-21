@@ -1,4 +1,4 @@
-# NVD Car Detection in Snow — YOLOv9
+# NVD Car Detection in Snow - YOLOv9
 
 Car detection in snowy conditions on the Nordic Vehicle Dataset (NVD).
 Course project for D7047E Advanced Deep Learning, LTU Group 10.
